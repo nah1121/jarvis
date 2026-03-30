@@ -78,9 +78,6 @@ COPILOT_TIMEOUT = int(os.getenv("COPILOT_TIMEOUT", "60"))
 from tts_access import (
     DEFAULT_ENGINE as TTS_ENGINE,
     PIPER_VOICE,
-    PIPER_MODEL_PATH,
-    PYTTSX3_VOICE,
-    PYTTSX3_RATE,
     synthesize as tts_synthesize,
 )
 TTS_VOICE = os.getenv("TTS_VOICE", PIPER_VOICE)
