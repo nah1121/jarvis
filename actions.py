@@ -215,7 +215,7 @@ async def open_copilot_in_project(project_dir: str, prompt: str) -> dict:
         escaped_path = str(Path(project_dir)).replace('"', '\\"')
         ps_launch = (
             f"Start-Process powershell.exe -ArgumentList '-NoExit','-Command','cd \"{escaped_path}\"; "
-            f"copilot chat --message \"{escaped_prompt}\"'"
+            f"copilot -p \"{escaped_prompt}\"'"
         )
         result = await execute_terminal_command(ps_launch)
         confirmation = (
@@ -229,7 +229,7 @@ async def open_copilot_in_project(project_dir: str, prompt: str) -> dict:
     script = (
         'tell application "Terminal"\n'
         "    activate\n"
-        f'    do script "cd {project_dir} && copilot chat --message \\\"{escaped_prompt}\\\""\n'
+        f'    do script "cd {project_dir} && copilot -p \\\"{escaped_prompt}\\\""\n'
         "end tell"
     )
     proc = await asyncio.create_subprocess_exec(

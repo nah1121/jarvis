@@ -2,7 +2,7 @@
 Copilot CLI access layer.
 
 Replaces direct Anthropic/Claude API usage with the GitHub Copilot CLI.
-All LLM calls go through `copilot chat --message ...` using subprocess.
+All LLM calls go through `copilot -p ...` (non-interactive mode) using subprocess.
 """
 
 import asyncio
@@ -70,13 +70,13 @@ class CopilotRunner:
         cwd: str | None = None,
         timeout: int | None = None,
     ) -> str:
-        """Call `copilot chat --message ...` and return the text response."""
+        """Call `copilot -p ...` and return the text response."""
         if not self.available:
             raise CopilotError("Copilot CLI not available or disabled.")
 
         prompt = _format_prompt(system, messages)
         model = self.smart_model if use_smart else self.fast_model
-        cmd = [self.command, "chat", "--message", prompt]
+        cmd = [self.command, "-p", prompt]
         if model:
             cmd.extend(["--model", model])
 
