@@ -8,4 +8,7 @@ pyyaml>=6.0
 pytest-asyncio>=0.25.0
 piper-tts>=1.2.0
 pyttsx3>=2.90
+# Use onnxruntime-gpu if you have NVIDIA GPU with CUDA, otherwise use onnxruntime
+# For GPU: pip install onnxruntime-gpu (requires CUDA 11.x or 12.x)
+# For CPU: pip install onnxruntime (default, works everywhere)
 onnxruntime>=1.16.0

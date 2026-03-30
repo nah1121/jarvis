@@ -9,13 +9,14 @@ from typing import Optional, Tuple
 log = logging.getLogger("jarvis.tts")
 
 # TTS switched to Piper for 8GB VRAM Windows 11 - Kokoro failed to install
-# Piper is lightweight (~25MB model), CPU-friendly, neural-quality TTS
+# Piper supports high-quality models with GPU acceleration for faster synthesis
 # pyttsx3 (Windows SAPI5) used as simple offline fallback if Piper fails
 
 DEFAULT_ENGINE = os.getenv("TTS_ENGINE", "piper").lower()
 PIPER_VOICE = os.getenv("PIPER_VOICE", "en_US-ryan-high")
 PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "")  # Auto-download if empty
 PIPER_SAMPLE_RATE = int(os.getenv("PIPER_SAMPLE_RATE", "22050"))
+PIPER_USE_GPU = os.getenv("PIPER_USE_GPU", "true").lower() in ("true", "1", "yes")
 PYTTSX3_VOICE = os.getenv("PYTTSX3_VOICE", "")  # Empty = default Windows voice
 PYTTSX3_RATE = int(os.getenv("PYTTSX3_RATE", "180"))  # Words per minute
 
@@ -104,8 +105,31 @@ async def _ensure_piper_voice():
                     return None
 
             try:
+                # Configure GPU acceleration if enabled
+                if PIPER_USE_GPU:
+                    try:
+                        import onnxruntime as ort
+                        providers = ort.get_available_providers()
+
+                        if 'CUDAExecutionProvider' in providers:
+                            log.info("Loading Piper model with CUDA GPU acceleration")
+                            voice = PiperVoice.load(
+                                model_path,
+                                use_cuda=True
+                            )
+                            log.info(f"Piper voice loaded with GPU: {model_path}")
+                            return voice
+                        else:
+                            log.warning(
+                                "CUDA GPU not available. Install onnxruntime-gpu for GPU support. "
+                                "Falling back to CPU."
+                            )
+                    except Exception as gpu_error:
+                        log.warning(f"GPU initialization failed: {gpu_error}. Using CPU.")
+
+                # Fall back to CPU
                 voice = PiperVoice.load(model_path)
-                log.info(f"Piper voice loaded: {model_path}")
+                log.info(f"Piper voice loaded (CPU): {model_path}")
                 return voice
             except Exception as e:
                 log.warning(f"Failed to load Piper voice from {model_path}: {e}")
