@@ -6,21 +6,37 @@ are automatically available. No OAuth needed.
 
 IMPORTANT: This module is intentionally READ-ONLY.
 No send, delete, move, or modify functions exist by design.
+
+WINDOWS COMPATIBILITY: On Windows, all mail functions return empty results.
+macOS-specific AppleScript functionality is disabled.
 """
 
 import asyncio
 import logging
+import sys
 from datetime import datetime
 
 log = logging.getLogger("jarvis.mail")
+
+# Detect platform
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    log.info("Windows detected - Mail integration disabled (macOS only)")
 
 _mail_launched = False
 
 
 async def _ensure_mail_running():
-    """Launch Mail.app if not already running."""
+    """Launch Mail.app if not already running. Windows stub."""
     global _mail_launched
     if _mail_launched:
+        return
+
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        _mail_launched = True
         return
 
     check = 'tell application "System Events" to return (name of every application process) contains "Mail"'
@@ -52,7 +68,11 @@ async def _ensure_mail_running():
 
 
 async def _run_mail_script(script: str, timeout: float = 20) -> str:
-    """Run an AppleScript against Mail.app and return output."""
+    """Run an AppleScript against Mail.app and return output. Windows stub."""
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        return ""
+
     await _ensure_mail_running()
     try:
         proc = await asyncio.create_subprocess_exec(

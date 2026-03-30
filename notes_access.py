@@ -3,16 +3,30 @@ JARVIS Apple Notes Access — READ + CREATE ONLY.
 
 Can read existing notes and create new ones.
 CANNOT edit or delete existing notes (safety).
+
+WINDOWS COMPATIBILITY: On Windows, all notes functions return empty results.
+macOS-specific AppleScript functionality is disabled.
 """
 
 import asyncio
 import logging
+import sys
 
 log = logging.getLogger("jarvis.notes")
 
+# Detect platform
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    log.info("Windows detected - Notes integration disabled (macOS only)")
+
 
 async def _run_notes_script(script: str, timeout: float = 10) -> str:
-    """Run an AppleScript against Notes.app."""
+    """Run an AppleScript against Notes.app. Windows stub."""
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        return ""
     try:
         proc = await asyncio.create_subprocess_exec(
             "osascript", "-e", script,

@@ -61,9 +61,18 @@ log = logging.getLogger("jarvis")
 # ---------------------------------------------------------------------------
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "")  # For local LLM proxy (e.g., free-claude-code)
+
+# Legacy Fish Audio cloud TTS (macOS)
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
 FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
 FISH_API_URL = "https://api.fish.audio/v1/tts"
+
+# Local Fish Speech TTS server (Windows)
+TTS_BASE_URL = os.getenv("TTS_BASE_URL", "")  # e.g., http://localhost:8080
+TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "male_en")
+TTS_REFERENCE_AUDIO = os.getenv("TTS_REFERENCE_AUDIO", "")  # Optional: path to reference audio
+
 USER_NAME = os.getenv("USER_NAME", "sir")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -1035,35 +1044,76 @@ _last_greeting_time: float = 0
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS."""
-    if not FISH_API_KEY:
-        log.warning("FISH_API_KEY not set, skipping TTS")
-        return None
+    """Generate speech audio from text using Fish Audio TTS (cloud) or Fish Speech (local)."""
 
-    try:
-        async with httpx.AsyncClient(timeout=15.0) as http:
-            response = await http.post(
-                FISH_API_URL,
-                headers={
-                    "Authorization": f"Bearer {FISH_API_KEY}",
-                    "Content-Type": "application/json",
-                },
-                json={
+    # Try local Fish Speech server first (Windows)
+    if TTS_BASE_URL:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http:
+                # Fish Speech API endpoint
+                url = f"{TTS_BASE_URL.rstrip('/')}/v1/tts"
+
+                # Build payload for Fish Speech
+                payload = {
                     "text": text,
-                    "reference_id": FISH_VOICE_ID,
                     "format": "mp3",
-                },
-            )
-            if response.status_code == 200:
-                _session_tokens["tts_calls"] += 1
-                _append_usage_entry(0, 0, "tts")
-                return response.content
-            else:
-                log.error(f"TTS error: {response.status_code}")
-                return None
-    except Exception as e:
-        log.error(f"TTS error: {e}")
-        return None
+                }
+
+                # Add voice configuration
+                if TTS_REFERENCE_AUDIO:
+                    # Use reference audio for voice cloning
+                    payload["reference_audio"] = TTS_REFERENCE_AUDIO
+                elif TTS_VOICE_ID:
+                    # Use voice ID
+                    payload["reference_id"] = TTS_VOICE_ID
+
+                response = await http.post(url, json=payload)
+
+                if response.status_code == 200:
+                    _session_tokens["tts_calls"] += 1
+                    _append_usage_entry(0, 0, "tts")
+                    log.debug(f"TTS generated using local Fish Speech: {len(response.content)} bytes")
+                    return response.content
+                else:
+                    log.warning(f"Local TTS server returned {response.status_code}: {response.text[:200]}")
+        except httpx.ConnectError:
+            log.warning(f"Local TTS server not reachable at {TTS_BASE_URL}")
+        except Exception as e:
+            log.warning(f"Local TTS error: {e}")
+
+    # Fall back to Fish Audio cloud API (macOS)
+    if FISH_API_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as http:
+                response = await http.post(
+                    FISH_API_URL,
+                    headers={
+                        "Authorization": f"Bearer {FISH_API_KEY}",
+                        "Content-Type": "application/json",
+                    },
+                    json={
+                        "text": text,
+                        "reference_id": FISH_VOICE_ID,
+                        "format": "mp3",
+                    },
+                )
+                if response.status_code == 200:
+                    _session_tokens["tts_calls"] += 1
+                    _append_usage_entry(0, 0, "tts")
+                    log.debug(f"TTS generated using Fish Audio cloud: {len(response.content)} bytes")
+                    return response.content
+                else:
+                    log.error(f"Fish Audio TTS error: {response.status_code}")
+                    return None
+        except Exception as e:
+            log.error(f"Fish Audio TTS error: {e}")
+            return None
+
+    # No TTS configured
+    if not TTS_BASE_URL and not FISH_API_KEY:
+        log.warning("No TTS configured (set TTS_BASE_URL or FISH_API_KEY)")
+
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1315,7 +1365,16 @@ return windowList
 async def lifespan(application: FastAPI):
     global anthropic_client, cached_projects
     if ANTHROPIC_API_KEY:
-        anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+        # Support both cloud API and local proxy (e.g., free-claude-code)
+        if ANTHROPIC_BASE_URL:
+            anthropic_client = anthropic.AsyncAnthropic(
+                api_key=ANTHROPIC_API_KEY,
+                base_url=ANTHROPIC_BASE_URL
+            )
+            log.info(f"Using local LLM proxy at {ANTHROPIC_BASE_URL}")
+        else:
+            anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
+            log.info("Using Anthropic cloud API")
     else:
         log.warning("ANTHROPIC_API_KEY not set — LLM features disabled")
     cached_projects = []
@@ -2296,7 +2355,7 @@ class PreferencesUpdate(BaseModel):
 
 @app.post("/api/settings/keys")
 async def api_settings_keys(body: KeyUpdate):
-    allowed = {"ANTHROPIC_API_KEY", "FISH_API_KEY", "FISH_VOICE_ID", "USER_NAME", "HONORIFIC", "CALENDAR_ACCOUNTS"}
+    allowed = {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "FISH_API_KEY", "FISH_VOICE_ID", "TTS_BASE_URL", "TTS_VOICE_ID", "TTS_REFERENCE_AUDIO", "USER_NAME", "HONORIFIC", "CALENDAR_ACCOUNTS"}
     if body.key_name not in allowed:
         return JSONResponse({"success": False, "error": "Invalid key name"}, status_code=400)
     _write_env_key(body.key_name, body.key_value)
@@ -2363,8 +2422,11 @@ async def api_settings_status():
         "uptime_seconds": int(time.time() - _session_start),
         "env_keys_set": {
             "anthropic": bool(env_dict.get("ANTHROPIC_API_KEY", "").strip() and env_dict.get("ANTHROPIC_API_KEY", "") != "your-anthropic-api-key-here"),
+            "anthropic_base_url": env_dict.get("ANTHROPIC_BASE_URL", ""),
             "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
+            "tts_base_url": env_dict.get("TTS_BASE_URL", ""),
+            "tts_voice_id": env_dict.get("TTS_VOICE_ID", ""),
             "user_name": env_dict.get("USER_NAME", ""),
         },
     }
