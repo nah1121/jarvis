@@ -3,16 +3,27 @@ JARVIS Calendar Access — read Apple Calendar via AppleScript.
 
 Strategy: fetch all events per-calendar in parallel (bulk property access),
 filter dates in Python. Results cached and refreshed in background.
+
+WINDOWS COMPATIBILITY: On Windows, all calendar functions return empty results.
+macOS-specific AppleScript functionality is disabled.
 """
 
 import asyncio
 import logging
 import os
+import sys
 import time as _time
 from datetime import datetime, timedelta
 from pathlib import Path
 
 log = logging.getLogger("jarvis.calendar")
+
+# Detect platform
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    log.info("Windows detected - Calendar integration disabled (macOS only)")
 
 # Calendars to scan — set CALENDAR_ACCOUNTS env var to a comma-separated list,
 # or leave empty to auto-discover ALL calendars from Apple Calendar.
@@ -45,10 +56,16 @@ end tell
 
 
 async def _ensure_calendar_running():
-    """Launch Calendar.app if not already running."""
+    """Launch Calendar.app if not already running. Windows stub."""
     global _calendar_launched
     if _calendar_launched:
         return
+
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        _calendar_launched = True
+        return
+
     try:
         proc = await asyncio.create_subprocess_exec(
             "open", "-a", "Calendar", "-g",
@@ -64,7 +81,11 @@ async def _ensure_calendar_running():
 
 
 async def _fetch_calendar_events(cal_name: str, timeout: float = 12.0) -> list[dict]:
-    """Fetch all events from one calendar, filter to today in Python."""
+    """Fetch all events from one calendar, filter to today in Python. Windows stub."""
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        return []
+
     script = _BULK_SCRIPT.replace("{cal_name}", cal_name)
     try:
         proc = await asyncio.create_subprocess_exec(
@@ -207,7 +228,11 @@ async def get_next_event() -> dict | None:
 
 
 async def get_calendar_names() -> list[str]:
-    """Get list of all calendar names."""
+    """Get list of all calendar names. Windows stub."""
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        return []
+
     await _ensure_calendar_running()
     try:
         proc = await asyncio.create_subprocess_exec(

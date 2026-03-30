@@ -2,9 +2,9 @@
 
 **Just A Rather Very Intelligent System.**
 
-A voice-first AI assistant that runs on your Mac. Talk to it, and it talks back -- with a British accent, dry wit, and an audio-reactive particle orb straight out of the MCU.
+A voice-first AI assistant that runs on your Mac or Windows PC. Talk to it, and it talks back -- with a British accent, dry wit, and an audio-reactive particle orb straight out of the MCU.
 
-JARVIS connects to your Apple Calendar, Mail, and Notes. It can browse the web, spawn Claude Code sessions to build entire projects, and plan your day -- all through natural voice conversation.
+JARVIS connects to your Apple Calendar, Mail, and Notes (macOS only). It can browse the web, spawn Claude Code sessions to build entire projects, and plan your day -- all through natural voice conversation.
 
 > "Will do, sir."
 
@@ -13,12 +13,36 @@ JARVIS connects to your Apple Calendar, Mail, and Notes. It can browse the web, 
 
 ---
 
+## Platform Support
+
+| Platform | Status | Notes |
+|----------|--------|-------|
+| **macOS** | ✅ Full support | All features including Calendar, Mail, Notes integration |
+| **Windows 11** | ✅ Supported | Voice, browser, memory work. Calendar/Mail/Notes disabled. Uses local LLM + TTS. |
+| **Linux** | 🚧 Experimental | Core features work, system integrations need platform-specific implementations |
+
+### Windows 11 Setup
+
+The Windows version uses **local** LLM and TTS instead of cloud APIs:
+- **free-claude-code** proxy with LM Studio, NVIDIA NIM, or other local LLMs
+- **Fish Speech** local TTS server with voice cloning
+
+**See [SETUP_WINDOWS.md](SETUP_WINDOWS.md) for complete Windows setup guide.**
+
+Quick Windows start:
+```powershell
+# After setting up local services (see SETUP_WINDOWS.md)
+.\start-jarvis.ps1
+```
+
+---
+
 ## What It Does
 
 - **Voice conversation** -- speak naturally, get spoken responses with a JARVIS voice
 - **Builds software** -- say "build me a landing page" and watch Claude Code do the work
-- **Reads your calendar** -- "What's on my schedule today?"
-- **Reads your email** -- "Any unread messages?" (read-only, by design)
+- **Reads your calendar** -- "What's on my schedule today?" (macOS only)
+- **Reads your email** -- "Any unread messages?" (read-only, by design, macOS only)
 - **Browses the web** -- "Search for the best restaurants in Austin"
 - **Manages tasks** -- "Remind me to call the client tomorrow"
 - **Takes notes** -- "Save that as a note"
@@ -29,6 +53,7 @@ JARVIS connects to your Apple Calendar, Mail, and Notes. It can browse the web, 
 
 ## Requirements
 
+### macOS
 - **macOS** (uses AppleScript for Calendar, Mail, Notes integration)
 - **Python 3.11+**
 - **Node.js 18+**
@@ -36,6 +61,15 @@ JARVIS connects to your Apple Calendar, Mail, and Notes. It can browse the web, 
 - **Anthropic API key** -- powers the AI brain ([get one here](https://console.anthropic.com/))
 - **Fish Audio API key** -- powers the voice ([get one here](https://fish.audio/))
 - **Claude Code CLI** -- for spawning dev tasks ([install here](https://docs.anthropic.com/en/docs/claude-code))
+
+### Windows 11
+- **Windows 11**
+- **Python 3.10+**
+- **Node.js 18+**
+- **Google Chrome or Edge**
+- **free-claude-code proxy** -- local LLM proxy ([setup guide](https://github.com/nah1121/free-claude-code))
+- **LM Studio or NVIDIA NIM** -- for local LLM inference
+- **Fish Speech** -- local TTS server ([setup guide](https://github.com/fishaudio/fish-speech))
 
 ## Quick Start (with Claude Code)
 
@@ -49,7 +83,7 @@ claude
 
 Claude Code will read the project's `CLAUDE.md` and walk you through setup step by step -- API keys, dependencies, SSL certs, everything.
 
-## Manual Setup
+## Manual Setup (macOS)
 
 ```bash
 # 1. Clone the repo
@@ -83,6 +117,7 @@ Click the page once to enable audio, then speak. JARVIS will respond.
 
 ## Configuration
 
+### macOS (Cloud APIs)
 Edit your `.env` file:
 
 ```env
@@ -96,6 +131,24 @@ USER_NAME=Tony
 # Optional -- specific calendar accounts (comma-separated)
 # Leave empty to auto-discover all calendars
 CALENDAR_ACCOUNTS=you@gmail.com,work@company.com
+```
+
+### Windows 11 (Local LLM + TTS)
+Edit your `.env` file:
+
+```env
+# Local LLM proxy (free-claude-code)
+ANTHROPIC_BASE_URL=http://localhost:8082
+ANTHROPIC_API_KEY=freecc
+
+# Local TTS (Fish Speech)
+TTS_BASE_URL=http://localhost:8080
+TTS_VOICE_ID=male_en
+# Or use custom voice cloning:
+# TTS_REFERENCE_AUDIO=C:\fish-speech\references\jarvis.wav
+
+# Optional
+USER_NAME=Tony
 ```
 
 ## Architecture
@@ -173,9 +226,10 @@ All macOS integrations use AppleScript -- no OAuth flows, no token management. J
 
 Contributions are welcome. Some areas that could use work:
 
-- **Linux/Windows support** -- replace AppleScript with cross-platform alternatives
-- **Alternative TTS engines** -- add ElevenLabs, OpenAI TTS, or local models
-- **Alternative LLMs** -- add OpenAI, Gemini, or local model support
+- **Linux support** -- add Linux-specific system integrations (D-Bus, etc.)
+- **Windows enhancements** -- add Outlook integration, PowerShell automation
+- **Alternative TTS engines** -- add ElevenLabs, OpenAI TTS support
+- **Alternative LLMs** -- add OpenAI, Gemini support
 - **Mobile client** -- a companion app for voice interaction on the go
 - **Plugin system** -- make it easy to add new actions and integrations
 

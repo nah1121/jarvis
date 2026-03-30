@@ -3,26 +3,41 @@ JARVIS Action Executor — AppleScript-based system actions.
 
 Execute actions IMMEDIATELY, before generating any LLM response.
 Each function returns {"success": bool, "confirmation": str}.
+
+WINDOWS COMPATIBILITY: Terminal and Finder automation is disabled on Windows.
+Browser automation (Playwright) still works.
 """
 
 import asyncio
 import logging
 import os
 import re
+import sys
 import time
 from pathlib import Path
 from urllib.parse import quote
 
 log = logging.getLogger("jarvis.actions")
 
+# Detect platform
+IS_WINDOWS = sys.platform.startswith("win")
+IS_MACOS = sys.platform == "darwin"
+
+if IS_WINDOWS:
+    log.info("Windows detected - Terminal/Finder automation disabled (macOS only)")
+
 DESKTOP_PATH = Path.home() / "Desktop"
 
 
 async def _mark_terminal_as_jarvis(revert_after: float = 5.0):
-    """Temporarily set the front Terminal window to Ocean theme, then revert.
+    """Temporarily set the front Terminal window to Ocean theme, then revert. Windows stub.
 
     Shows the user JARVIS is active in that terminal. Reverts after revert_after seconds.
     """
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        return
+
     # Save the current profile, switch to Ocean, then revert
     script_save = (
         'tell application "Terminal"\n'
@@ -81,7 +96,15 @@ async def _revert_terminal_theme(profile_name: str):
 
 
 async def open_terminal(command: str = "") -> dict:
-    """Open Terminal.app and optionally run a command. Marks it blue for JARVIS."""
+    """Open Terminal.app and optionally run a command. Marks it blue for JARVIS. Windows stub."""
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        log.warning("Terminal automation not available on Windows")
+        return {
+            "success": False,
+            "confirmation": "Terminal automation is not available on Windows, sir."
+        }
+
     if command:
         escaped = command.replace('"', '\\"')
         script = (
@@ -155,12 +178,19 @@ async def open_chrome(url: str) -> dict:
 
 
 async def open_claude_in_project(project_dir: str, prompt: str) -> dict:
-    """Open Terminal, cd to project dir, run Claude Code interactively.
+    """Open Terminal, cd to project dir, run Claude Code interactively. Windows stub.
 
     Writes the prompt to CLAUDE.md (which claude reads automatically on startup)
     then launches claude in interactive mode with --dangerously-skip-permissions.
     No prompt escaping needed — CLAUDE.md handles context delivery.
     """
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        log.warning("Terminal automation not available on Windows")
+        return {
+            "success": False,
+            "confirmation": "Terminal automation is not available on Windows, sir. You can run Claude Code manually."
+        }
     # Write prompt to CLAUDE.md — claude reads this automatically
     claude_md = Path(project_dir) / "CLAUDE.md"
     claude_md.write_text(f"# Task\n\n{prompt}\n\nBuild this completely. If web app, make index.html work standalone.\n")
@@ -192,11 +222,19 @@ async def open_claude_in_project(project_dir: str, prompt: str) -> dict:
 
 
 async def prompt_existing_terminal(project_name: str, prompt: str) -> dict:
-    """Find a Terminal window matching a project name and type a prompt into it.
+    """Find a Terminal window matching a project name and type a prompt into it. Windows stub.
 
     Uses System Events keystroke to type into an active Claude Code session
     rather than `do script` which would open a new shell.
     """
+    # Windows stub - AppleScript disabled
+    if IS_WINDOWS:
+        log.warning("Terminal automation not available on Windows")
+        return {
+            "success": False,
+            "confirmation": "Terminal automation is not available on Windows, sir."
+        }
+
     escaped_name = project_name.replace('"', '\\"')
     escaped_prompt = prompt.replace("\\", "\\\\").replace('"', '\\"')
 
