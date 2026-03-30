@@ -254,15 +254,23 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
             audio_stream = io.BytesIO()
             voice_obj.synthesize(text, audio_stream)
             audio_stream.seek(0)
-            return audio_stream.read()
+            audio_bytes = audio_stream.read()
+
+            # Check if synthesis produced empty audio
+            if not audio_bytes:
+                log.warning("Piper synthesis produced empty audio")
+                return None
+
+            return audio_bytes
         except Exception as e:
-            log.warning(f"Piper synthesis error: {e}")
+            log.warning(f"Piper synthesis error: {e}", exc_info=True)
             return None
 
     try:
-        return await loop.run_in_executor(_piper_executor, _render)
+        result = await loop.run_in_executor(_piper_executor, _render)
+        return result
     except Exception as e:
-        log.warning(f"Piper execution error: {e}")
+        log.warning(f"Piper execution error: {e}", exc_info=True)
         return None
 
 
@@ -318,7 +326,7 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
     try:
         engine = await _ensure_pyttsx3_engine()
     except Exception as e:
-        log.warning(f"pyttsx3 engine error: {e}")
+        log.warning(f"pyttsx3 engine error: {e}", exc_info=True)
         return None
 
     if engine is None:
@@ -345,13 +353,19 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
             except OSError as e:
                 log.debug("Failed to delete temporary WAV file %s: %s", tmp_path, e)
 
+            # Check if synthesis produced empty audio
+            if not audio_bytes:
+                log.warning("pyttsx3 synthesis produced empty audio")
+                return None
+
             return audio_bytes
         except Exception as e:
-            log.warning(f"pyttsx3 synthesis error: {e}")
+            log.warning(f"pyttsx3 synthesis error: {e}", exc_info=True)
             return None
 
     try:
-        return await loop.run_in_executor(_pyttsx3_executor, _render)
+        result = await loop.run_in_executor(_pyttsx3_executor, _render)
+        return result
     except Exception as e:
-        log.warning(f"pyttsx3 execution error: {e}")
+        log.warning(f"pyttsx3 execution error: {e}", exc_info=True)
         return None
