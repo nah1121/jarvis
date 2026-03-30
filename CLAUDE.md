@@ -1,13 +1,13 @@
 # JARVIS — Voice AI Assistant
 
 ## Overview
-JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for macOS. It runs locally on your machine, connecting to your Apple Calendar, Mail, Notes, and can spawn Claude Code sessions for development tasks.
+JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for macOS. It runs locally on your machine, connecting to your Apple Calendar, Mail, Notes, and can spawn Copilot CLI sessions for development tasks.
 
 ## Quick Start
-When a user clones this repo and starts Claude Code, help them:
+When a user clones this repo and uses GitHub Copilot CLI, help them:
 1. Copy .env.example to .env
-2. Get an Anthropic API key from console.anthropic.com
-3. Get a Fish Audio API key from fish.audio
+2. Install GitHub Copilot CLI: npm install -g @github/copilot
+3. (Optional) Get a Fish Audio API key from fish.audio for cloud TTS
 4. Install Python dependencies: pip install -r requirements.txt
 5. Install frontend dependencies: cd frontend && npm install
 6. Generate SSL certs: openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
@@ -20,7 +20,7 @@ When a user clones this repo and starts Claude Code, help them:
 - **Backend**: FastAPI + Python (server.py, ~2300 lines)
 - **Frontend**: Vite + TypeScript + Three.js (audio-reactive orb)
 - **Communication**: WebSocket (JSON messages + binary audio)
-- **AI**: Claude Haiku for fast responses, Claude Opus for research
+- **AI**: Copilot CLI (fast and smart models)
 - **TTS**: Fish Audio with JARVIS voice model
 - **System**: AppleScript for Calendar, Mail, Notes, Terminal integration
 
@@ -33,13 +33,15 @@ When a user clones this repo and starts Claude Code, help them:
 - `calendar_access.py` — Apple Calendar integration via AppleScript
 - `mail_access.py` — Apple Mail integration (READ-ONLY)
 - `notes_access.py` — Apple Notes integration
-- `actions.py` — System actions (Terminal, Chrome, Claude Code)
+- `actions.py` — System actions (Terminal, Chrome, Copilot CLI)
 - `browser.py` — Playwright web automation
-- `work_mode.py` — Persistent Claude Code sessions
+- `work_mode.py` — Persistent Copilot CLI sessions
 
 ## Environment Variables
-- `ANTHROPIC_API_KEY` (required) — Claude API access
-- `FISH_API_KEY` (required) — Fish Audio TTS
+- `COPILOT_CLI_ENABLED` — toggle Copilot CLI usage
+- `COPILOT_MODEL_FAST` / `COPILOT_MODEL_SMART` — model choices for fast vs deep responses
+- `COPILOT_TIMEOUT` — CLI call timeout in seconds
+- `FISH_API_KEY` (optional) — Fish Audio TTS
 - `FISH_VOICE_ID` (optional) — Voice model ID
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `CALENDAR_ACCOUNTS` (optional) — Comma-separated calendar emails

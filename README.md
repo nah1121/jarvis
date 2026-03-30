@@ -4,7 +4,7 @@
 
 A voice-first AI assistant that runs on your Mac or Windows PC. Talk to it, and it talks back -- with a British accent, dry wit, and an audio-reactive particle orb straight out of the MCU.
 
-JARVIS connects to your Apple Calendar, Mail, and Notes (macOS only). It can browse the web, spawn Claude Code sessions to build entire projects, and plan your day -- all through natural voice conversation.
+JARVIS connects to your Apple Calendar, Mail, and Notes (macOS only). It can browse the web, spawn Copilot CLI sessions to build entire projects, and plan your day -- all through natural voice conversation.
 
 > "Will do, sir."
 
@@ -40,7 +40,7 @@ Quick Windows start:
 ## What It Does
 
 - **Voice conversation** -- speak naturally, get spoken responses with a JARVIS voice
-- **Builds software** -- say "build me a landing page" and watch Claude Code do the work
+- **Builds software** -- say "build me a landing page" and watch Copilot CLI do the work
 - **Reads your calendar** -- "What's on my schedule today?" (macOS only)
 - **Reads your email** -- "Any unread messages?" (read-only, by design, macOS only)
 - **Browses the web** -- "Search for the best restaurants in Austin"
@@ -58,30 +58,16 @@ Quick Windows start:
 - **Python 3.11+**
 - **Node.js 18+**
 - **Google Chrome** (required for Web Speech API)
-- **Anthropic API key** -- powers the AI brain ([get one here](https://console.anthropic.com/))
-- **Fish Audio API key** -- powers the voice ([get one here](https://fish.audio/))
-- **Claude Code CLI** -- for spawning dev tasks ([install here](https://docs.anthropic.com/en/docs/claude-code))
+- **GitHub Copilot CLI** (`npm install -g @github/copilot`) — powers the AI brain
+- **Fish Audio API key** (optional if using cloud TTS) -- powers the voice ([get one here](https://fish.audio/))
 
 ### Windows 11
 - **Windows 11**
 - **Python 3.10+**
 - **Node.js 18+**
 - **Google Chrome or Edge**
-- **free-claude-code proxy** -- local LLM proxy ([setup guide](https://github.com/nah1121/free-claude-code))
-- **LM Studio or NVIDIA NIM** -- for local LLM inference
-- **Fish Speech** -- local TTS server ([setup guide](https://github.com/fishaudio/fish-speech))
-
-## Quick Start (with Claude Code)
-
-The fastest way to get running:
-
-```bash
-git clone https://github.com/yourusername/jarvis.git
-cd jarvis
-claude
-```
-
-Claude Code will read the project's `CLAUDE.md` and walk you through setup step by step -- API keys, dependencies, SSL certs, everything.
+- **GitHub Copilot CLI** (`npm install -g @github/copilot`)
+- **Fish Speech** (optional) -- local TTS server ([setup guide](https://github.com/fishaudio/fish-speech))
 
 ## Manual Setup (macOS)
 
@@ -121,9 +107,15 @@ Click the page once to enable audio, then speak. JARVIS will respond.
 Edit your `.env` file:
 
 ```env
-# Required
-ANTHROPIC_API_KEY=your-anthropic-api-key-here
-FISH_API_KEY=your-fish-audio-api-key-here
+# Copilot CLI
+COPILOT_CLI_ENABLED=true
+COPILOT_MODEL_FAST=gpt-4.1-mini
+COPILOT_MODEL_SMART=gpt-4.1
+COPILOT_TIMEOUT=60
+
+# Optional cloud TTS
+# FISH_API_KEY=your-fish-audio-api-key-here
+# FISH_VOICE_ID=612b878b113047d9a770c069c8b4fdfe
 
 # Optional -- your name (JARVIS will address you personally)
 USER_NAME=Tony
@@ -137,9 +129,11 @@ CALENDAR_ACCOUNTS=you@gmail.com,work@company.com
 Edit your `.env` file:
 
 ```env
-# Local LLM proxy (free-claude-code)
-ANTHROPIC_BASE_URL=http://localhost:8082
-ANTHROPIC_API_KEY=freecc
+# Copilot CLI
+COPILOT_CLI_ENABLED=true
+COPILOT_MODEL_FAST=gpt-4.1-mini
+COPILOT_MODEL_SMART=gpt-4.1
+COPILOT_TIMEOUT=60
 
 # Local TTS (Fish Speech)
 TTS_BASE_URL=http://localhost:8080
@@ -154,10 +148,10 @@ USER_NAME=Tony
 ## Architecture
 
 ```
-Microphone -> Web Speech API -> WebSocket -> FastAPI -> Claude (Haiku) -> Fish Audio TTS -> WebSocket -> Speaker
+Microphone -> Web Speech API -> WebSocket -> FastAPI -> Copilot CLI (fast/smart) -> Fish Audio/Fish Speech TTS -> WebSocket -> Speaker
                                                 |
                                                 v
-                                        Claude Code Tasks
+                                        Copilot CLI Tasks
                                         (spawns real dev work)
                                                 |
                                                 v
@@ -170,8 +164,8 @@ Microphone -> Web Speech API -> WebSocket -> FastAPI -> Claude (Haiku) -> Fish A
 | Backend | FastAPI + Python (`server.py`, ~2300 lines) |
 | Frontend | Vite + TypeScript + Three.js |
 | Communication | WebSocket (JSON messages + binary audio) |
-| AI (fast) | Claude Haiku -- low-latency voice responses |
-| AI (deep) | Claude Opus -- research and complex tasks |
+| AI (fast) | Copilot fast model (`COPILOT_MODEL_FAST`) |
+| AI (deep) | Copilot smart model (`COPILOT_MODEL_SMART`) |
 | TTS | Fish Audio with JARVIS voice model |
 | System | AppleScript for all macOS integrations |
 
@@ -181,8 +175,8 @@ Microphone -> Web Speech API -> WebSocket -> FastAPI -> Claude (Haiku) -> Fish A
 2. Chrome's Web Speech API transcribes your speech in real-time
 3. The transcript is sent to the server via WebSocket
 4. JARVIS detects intent -- conversation, action, or build request
-5. For actions: spawns a Claude Code subprocess or runs AppleScript
-6. Generates a response via Claude Haiku (optimized for speed)
+5. For actions: spawns a Copilot CLI subprocess or runs AppleScript
+6. Generates a response via Copilot CLI (optimized for speed)
 7. Fish Audio converts the response to speech with the JARVIS voice
 8. Audio streams back to the browser via WebSocket
 9. The Three.js orb deforms and pulses in response to the audio
@@ -200,19 +194,19 @@ Microphone -> Web Speech API -> WebSocket -> FastAPI -> Claude (Haiku) -> Fish A
 | `calendar_access.py` | Apple Calendar integration via AppleScript |
 | `mail_access.py` | Apple Mail integration (read-only) |
 | `notes_access.py` | Apple Notes integration |
-| `actions.py` | System actions (Terminal, Chrome, Claude Code) |
+| `actions.py` | System actions (Terminal, Chrome, Copilot CLI) |
 | `browser.py` | Playwright web automation |
-| `work_mode.py` | Persistent Claude Code sessions |
+| `work_mode.py` | Persistent Copilot CLI sessions |
 | `planner.py` | Multi-step task planning with smart questions |
 
 ## Features in Detail
 
 ### Action System
 JARVIS uses action tags to trigger real system actions:
-- `[ACTION:BUILD]` -- spawns Claude Code to build a project
+- `[ACTION:BUILD]` -- spawns Copilot CLI to build a project
 - `[ACTION:BROWSE]` -- opens Chrome to a URL or search query
-- `[ACTION:RESEARCH]` -- deep research with Claude Opus, outputs an HTML report
-- `[ACTION:PROMPT_PROJECT]` -- connects to an existing project via Claude Code
+- `[ACTION:RESEARCH]` -- deep research with Copilot CLI, outputs an HTML report
+- `[ACTION:PROMPT_PROJECT]` -- connects to an existing project via Copilot CLI
 - `[ACTION:ADD_TASK]` -- creates a tracked task with priority and due date
 - `[ACTION:REMEMBER]` -- stores a fact for future context
 
@@ -243,7 +237,7 @@ Free for personal, non-commercial use. Commercial use requires a license — vis
 
 Built by [Ethan Rogers](https://ethanplus.ai).
 
-Powered by [Anthropic Claude](https://anthropic.com) and [Fish Audio](https://fish.audio).
+Powered by GitHub Copilot CLI and [Fish Audio](https://fish.audio).
 
 Inspired by the AI that started it all -- Tony Stark's JARVIS.
 

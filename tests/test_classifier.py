@@ -2,7 +2,6 @@
 Test the LLM intent classifier with 20 sample voice command phrases.
 
 Run: python3 tests/test_classifier.py
-Requires: ANTHROPIC_API_KEY in .env or environment
 """
 
 import asyncio
@@ -23,9 +22,7 @@ if env_path.exists():
             k, _, v = line.partition("=")
             os.environ.setdefault(k.strip(), v.strip().strip('"').strip("'"))
 
-import anthropic
-
-# Import the classifier and speech corrections
+from copilot_access import CopilotRunner
 from server import classify_intent, apply_speech_corrections
 
 
@@ -34,7 +31,7 @@ TEST_CASES = [
     # open_terminal
     ("open the terminal", "open_terminal"),
     ("open cloud code", "open_terminal"),
-    ("launch Claude Code", "open_terminal"),
+    ("launch Copilot CLI", "open_terminal"),
     ("open up the terminal for me", "open_terminal"),
     ("start clock code", "open_terminal"),
 
@@ -62,12 +59,7 @@ TEST_CASES = [
 
 
 async def run_tests():
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    if not api_key:
-        print("ERROR: ANTHROPIC_API_KEY not set")
-        sys.exit(1)
-
-    client = anthropic.AsyncAnthropic(api_key=api_key)
+    runner = CopilotRunner()
 
     passed = 0
     failed = 0
@@ -79,7 +71,7 @@ async def run_tests():
     for text, expected in TEST_CASES:
         # Apply speech corrections first (like the real flow)
         corrected = apply_speech_corrections(text)
-        result = await classify_intent(corrected, client)
+        result = await classify_intent(corrected, runner if runner.available else None)
         actual = result["action"]
 
         if actual == expected:

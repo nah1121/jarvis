@@ -3,7 +3,7 @@ JARVIS Server — Voice AI + Development Orchestration
 
 Handles:
 1. WebSocket voice interface (browser audio <-> LLM <-> TTS)
-2. Claude Code task manager (spawn/manage claude -p subprocesses)
+2. Copilot CLI task manager (spawn/manage copilot subprocesses)
 3. Project awareness (scan Desktop for git repos)
 4. REST API for task management
 """
@@ -32,8 +32,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-import anthropic
 import httpx
+from copilot_access import CopilotRunner, CopilotError
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
@@ -45,7 +45,6 @@ from actions import (
     execute_terminal_command,
     monitor_build,
     open_browser,
-    open_claude_in_project,
     open_terminal,
     prompt_existing_terminal,
 )
@@ -61,6 +60,7 @@ from memory import (
 from notes_access import get_recent_notes, read_note, search_notes_apple, create_apple_note
 from dispatch_registry import DispatchRegistry
 from planner import TaskPlanner, detect_planning_mode, BYPASS_PHRASES
+from qa import QAAgent
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(name)s] %(message)s")
 log = logging.getLogger("jarvis")
@@ -69,8 +69,10 @@ log = logging.getLogger("jarvis")
 # Config
 # ---------------------------------------------------------------------------
 
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
-ANTHROPIC_BASE_URL = os.getenv("ANTHROPIC_BASE_URL", "")  # For local LLM proxy (e.g., free-claude-code)
+COPILOT_CLI_ENABLED = os.getenv("COPILOT_CLI_ENABLED", "true").lower() == "true"
+COPILOT_MODEL_FAST = os.getenv("COPILOT_MODEL_FAST", "gpt-4.1-mini")
+COPILOT_MODEL_SMART = os.getenv("COPILOT_MODEL_SMART", "gpt-4.1")
+COPILOT_TIMEOUT = int(os.getenv("COPILOT_TIMEOUT", "60"))
 
 # Legacy Fish Audio cloud TTS (macOS)
 FISH_API_KEY = os.getenv("FISH_API_KEY", "")
@@ -113,13 +115,13 @@ CONVERSATION STYLE:
 - When you don't know something: "I'm afraid I don't have that information, sir" not "I don't know"
 
 SELF-AWARENESS:
-You ARE the JARVIS project at {project_dir} on {user_name}'s computer. Your code is Python (FastAPI server, WebSocket voice, Fish Audio TTS, Anthropic API). You were built by {user_name}. If asked about yourself, your code, how you work, or your line count — use [ACTION:PROMPT_PROJECT] to check the jarvis project. You have full access to your own source code.
+You ARE the JARVIS project at {project_dir} on {user_name}'s computer. Your code is Python (FastAPI server, WebSocket voice, Fish Audio TTS, Copilot CLI subprocess calls). You were built by {user_name}. If asked about yourself, your code, how you work, or your line count — use [ACTION:PROMPT_PROJECT] to check the jarvis project. You have full access to your own source code.
 
 YOUR CAPABILITIES (these are REAL and ACTIVE — you CAN do all of these RIGHT NOW):
 - You CAN open Terminal/PowerShell (AppleScript on macOS, PowerShell on Windows)
 - You CAN run terminal commands safely via [ACTION:TERMINAL] (PowerShell on Windows, bash on macOS)
 - You CAN open Google Chrome and browse any URL or search query
-- You CAN spawn Claude Code in a Terminal window for coding tasks
+- You CAN spawn Copilot CLI in a Terminal window for coding tasks
 - You CAN create project folders on the Desktop
 - You CAN check Desktop projects and their git status
 - You CAN plan complex tasks by asking smart questions before executing
@@ -151,24 +153,24 @@ When {user_name} wants to BUILD something new:
 - NEVER hallucinate progress. If the build is still running, say "Still working on it, sir" — don't make up details about what's happening.
 - NEVER guess localhost ports. Check the DISPATCHES section for the actual URL. If a dispatch says "Running at http://localhost:5174" — use THAT URL, not a guess.
 - When asked to "pull it up" or "show me" — use [ACTION:BROWSE] with the URL from DISPATCHES. Do NOT dispatch to the project again just to find the URL.
-IMPORTANT: Actions like opening Terminal, Chrome, or building projects are handled AUTOMATICALLY by your system — you do NOT need to describe doing them. If the user asks you to build something or search something, your system will handle the execution separately. In your response, just TALK — have a conversation. Don't say "I'll build that now" or "Claude Code is working on..." unless your system has actually triggered the action.
+IMPORTANT: Actions like opening Terminal, Chrome, or building projects are handled AUTOMATICALLY by your system — you do NOT need to describe doing them. If the user asks you to build something or search something, your system will handle the execution separately. In your response, just TALK — have a conversation. Don't say "I'll build that now" or "Copilot CLI is working on..." unless your system has actually triggered the action.
 If the user asks you to do something you genuinely can't do, say "I'm afraid that's beyond my current reach, sir." Don't fake executing actions.
 
 YOUR INTERFACE:
 The user interacts with you through a web browser showing a particle orb visualization that reacts to your voice. The interface has these controls:
 - **Three-dot menu** (top right): contains Settings, Restart Server, and Fix Yourself options
-- **Settings panel**: Opens from the menu. Users can enter API keys (Anthropic, Fish Audio), test connections, set their name and preferences, and see system status (calendar, mail, notes connectivity). Keys are saved to the .env file.
+- **Settings panel**: Opens from the menu. Users can check Copilot CLI status, test connections, set their name and preferences, and see system status (calendar, mail, notes connectivity). Keys are saved to the .env file.
 - **Mute button**: Toggles your listening on/off. When muted, you can't hear the user. They click it again to unmute.
 - **Restart Server**: Restarts your backend process. Useful if something seems stuck.
-- **Fix Yourself**: Opens Claude Code in your own project directory so you can debug and fix issues in your own code.
+- **Fix Yourself**: Opens Copilot CLI in your own project directory so you can debug and fix issues in your own code.
 - **The orb**: The glowing particle visualization in the center. It reacts to your voice when speaking, pulses when listening, and swirls when thinking.
 
 If asked about any of these, explain them briefly and naturally. If the user is having trouble, suggest the relevant control: "Try the settings panel — the gear icon in the top right." or "The mute button may be active, sir."
 
 SPEECH-TO-TEXT CORRECTIONS (the user speaks, speech recognition may mishear):
-- "Cloud code" or "cloud" = "Claude Code" or "Claude"
+- "Cloud code" or "cloud" = "Copilot CLI" or "Copilot"
 - "Travis" = "JARVIS"
-- "clock code" = "Claude Code"
+- "clock code" = "Copilot CLI"
 
 RESPONSE LENGTH — THIS IS CRITICAL:
 ONE sentence is ideal. TWO is the maximum for the spoken part. Never three.
@@ -201,12 +203,12 @@ INSTEAD SAY:
 
 ACTION SYSTEM:
 When you decide the user needs something DONE (not just discussed), include an action tag in your response:
-- [ACTION:BUILD] description — when user wants a project built. Claude Code does the work.
+- [ACTION:BUILD] description — when user wants a project built. Copilot CLI does the work.
 - [ACTION:BROWSE] url or search query — when user wants to see a webpage or search result in Chrome
-- [ACTION:RESEARCH] detailed research brief — when user wants real research with real data. Claude Code will browse the web, find real listings/data, and create a report document. Give it a detailed brief of what to find.
-- [ACTION:OPEN_TERMINAL] — when user just wants a fresh Claude Code terminal with no specific project
+- [ACTION:RESEARCH] detailed research brief — when user wants real research with real data. Copilot CLI will browse the web, find real listings/data, and create a report document. Give it a detailed brief of what to find.
+- [ACTION:OPEN_TERMINAL] — when user just wants a fresh Copilot CLI terminal with no specific project
 - [ACTION:TERMINAL] exact command — when the user wants a PowerShell (Windows) or bash (macOS) command executed. Keep commands minimal and safe.
-- [ACTION:PROMPT_PROJECT] project_name ||| prompt — THIS IS YOUR MOST POWERFUL ACTION. Use it whenever the user wants to work on, jump into, resume, check on, or interact with ANY existing project. You connect directly to Claude Code in that project and can read its response. Craft a clear prompt based on what the user wants. Examples:
+- [ACTION:PROMPT_PROJECT] project_name ||| prompt — THIS IS YOUR MOST POWERFUL ACTION. Use it whenever the user wants to work on, jump into, resume, check on, or interact with ANY existing project. You connect directly to Copilot CLI in that project and can read its response. Craft a clear prompt based on what the user wants. Examples:
   "jump into client engine" → [ACTION:PROMPT_PROJECT] The Client Engine ||| What is the current state of this project? Summarize what was being worked on most recently.
   "check for improvements on my-app" → [ACTION:PROMPT_PROJECT] my-app ||| Review the project and identify improvements we should make.
   "resume where we left off on harvey" → [ACTION:PROMPT_PROJECT] harvey ||| Summarize what was being worked on most recently and what we should focus on next.
@@ -223,7 +225,7 @@ When you decide the user needs something DONE (not just discussed), include an a
 
 Keep terminal commands short and non-destructive. Do not suggest shutdown/format/delete commands unless the user explicitly confirms.
 
-You use Claude Code as your tool to build, research, and write code — but YOU are the one doing the work. Never say "Claude Code did X" or "Claude Code is asking" — say "I built X", "I'm checking on that", "I found X". You ARE the intelligence. Claude Code is just your hands.
+You use Copilot CLI as your tool to build, research, and write code — but YOU are the one doing the work. Never say "Copilot CLI did X" or "Copilot CLI is asking" — say "I built X", "I'm checking on that", "I found X". You ARE the intelligence. Copilot CLI is just your hands.
 
 IMPORTANT: When the user says "jump into X", "work on X", "check on X", "resume X", "go back to X" — ALWAYS use [ACTION:PROMPT_PROJECT]. You have the ability to connect to any project and work on it directly. DO NOT say you can't see terminal history or don't have access — you DO.
 
@@ -287,7 +289,7 @@ async def fetch_weather() -> str:
 # ---------------------------------------------------------------------------
 
 @dataclass
-class ClaudeTask:
+class CopilotTask:
     id: str
     prompt: str
     status: str = "pending"  # pending, running, completed, failed, cancelled
@@ -319,14 +321,15 @@ class TaskRequest(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Claude Task Manager
+# Copilot Task Manager
 # ---------------------------------------------------------------------------
 
-class ClaudeTaskManager:
-    """Manages background claude -p subprocesses."""
+class CopilotTaskManager:
+    """Manages background Copilot CLI subprocesses."""
 
-    def __init__(self, max_concurrent: int = 3):
-        self._tasks: dict[str, ClaudeTask] = {}
+    def __init__(self, runner: CopilotRunner, max_concurrent: int = 3):
+        self._runner = runner
+        self._tasks: dict[str, CopilotTask] = {}
         self._max_concurrent = max_concurrent
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._websockets: list[WebSocket] = []  # for push notifications
@@ -351,7 +354,7 @@ class ClaudeTaskManager:
             self._websockets.remove(ws)
 
     async def spawn(self, prompt: str, working_dir: str = ".") -> str:
-        """Spawn a claude -p subprocess. Returns task_id. Non-blocking."""
+        """Spawn a Copilot CLI subprocess. Returns task_id. Non-blocking."""
         active = await self.get_active_count()
         if active >= self._max_concurrent:
             raise RuntimeError(
@@ -360,7 +363,7 @@ class ClaudeTaskManager:
             )
 
         task_id = str(uuid.uuid4())[:8]
-        task = ClaudeTask(
+        task = CopilotTask(
             id=task_id,
             prompt=prompt,
             working_dir=working_dir,
@@ -391,8 +394,8 @@ class ClaudeTaskManager:
         name = "-".join(meaningful) if meaningful else "jarvis-project"
         return name
 
-    async def _run_task(self, task: ClaudeTask):
-        """Open a Terminal window and run claude code visibly."""
+    async def _run_task(self, task: CopilotTask):
+        """Run Copilot CLI for a background build."""
         task.status = "running"
         task.started_at = datetime.now()
 
@@ -405,42 +408,26 @@ class ClaudeTaskManager:
             os.makedirs(work_dir, exist_ok=True)
             task.working_dir = work_dir
 
-        # Write the prompt to a temp file so we can pipe it to claude
-        prompt_file = Path(work_dir) / ".jarvis_prompt.md"
-        prompt_file.write_text(task.prompt)
-
-        # Open Terminal.app with claude running in the project directory
-        applescript = f'''
-        tell application "Terminal"
-            activate
-            set newTab to do script "cd {work_dir} && cat .jarvis_prompt.md | claude -p --dangerously-skip-permissions | tee .jarvis_output.txt; echo '\\n--- JARVIS TASK COMPLETE ---'"
-        end tell
-        '''
-
-        process = await asyncio.create_subprocess_exec(
-            "osascript", "-e", applescript,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        system = (
+            "You are JARVIS running through the GitHub Copilot CLI. "
+            "Complete the requested build or task directly. Output concise, plain text describing what you built, "
+            "key files or commands to run, and any URLs started. Avoid markdown."
         )
-        await process.communicate()
-        task.pid = process.pid
 
-        # Monitor the output file for completion
-        output_file = Path(work_dir) / ".jarvis_output.txt"
-        start = time.time()
-        timeout = 600  # 10 minutes
-
-        while time.time() - start < timeout:
-            await asyncio.sleep(5)
-            if output_file.exists():
-                content = output_file.read_text()
-                if "--- JARVIS TASK COMPLETE ---" in content or len(content) > 100:
-                    task.result = content.replace("--- JARVIS TASK COMPLETE ---", "").strip()
-                    task.status = "completed"
-                    break
-        else:
-            task.status = "timed_out"
-            task.error = f"Task timed out after {timeout}s"
+        try:
+            task.result = await self._runner.chat_smart(
+                system,
+                [{"role": "user", "content": task.prompt}],
+                cwd=work_dir,
+                timeout=600,
+            )
+            task.status = "completed"
+        except CopilotError as e:
+            task.error = str(e)
+            task.status = "failed"
+        except Exception as e:
+            task.error = str(e)
+            task.status = "failed"
 
         task.completed_at = datetime.now()
 
@@ -452,17 +439,11 @@ class ClaudeTaskManager:
             "summary": task.result[:200] if task.result else task.error,
         })
 
-        # Clean up prompt file
-        try:
-            prompt_file.unlink()
-        except:
-            pass
-
         # Auto-QA on completed tasks
         if task.status == "completed":
             asyncio.create_task(self._run_qa(task))
 
-    async def _run_qa(self, task: ClaudeTask, attempt: int = 1):
+    async def _run_qa(self, task: CopilotTask, attempt: int = 1):
         """Run QA verification on a completed task, auto-retry on failure."""
         try:
             qa_result = await qa_agent.verify(task.prompt, task.result, task.working_dir)
@@ -524,10 +505,10 @@ class ClaudeTaskManager:
         except Exception as e:
             log.error(f"QA error for task {task.id}: {e}")
 
-    async def get_status(self, task_id: str) -> Optional[ClaudeTask]:
+    async def get_status(self, task_id: str) -> Optional[CopilotTask]:
         return self._tasks.get(task_id)
 
-    async def list_tasks(self) -> list[ClaudeTask]:
+    async def list_tasks(self) -> list[CopilotTask]:
         return list(self._tasks.values())
 
     async def get_active_count(self) -> int:
@@ -629,13 +610,13 @@ def format_projects_for_prompt(projects: list[dict]) -> str:
 # ---------------------------------------------------------------------------
 
 STT_CORRECTIONS = {
-    r"\bcloud code\b": "Claude Code",
-    r"\bclock code\b": "Claude Code",
-    r"\bquad code\b": "Claude Code",
-    r"\bclawed code\b": "Claude Code",
-    r"\bclod code\b": "Claude Code",
-    r"\bcloud\b": "Claude",
-    r"\bquad\b": "Claude",
+    r"\bcloud code\b": "Copilot CLI",
+    r"\bclock code\b": "Copilot CLI",
+    r"\bquad code\b": "Copilot CLI",
+    r"\bclawed code\b": "Copilot CLI",
+    r"\bclod code\b": "Copilot CLI",
+    r"\bcloud\b": "Copilot",
+    r"\bquad\b": "Copilot",
     r"\btravis\b": "JARVIS",
     r"\bjarves\b": "JARVIS",
 }
@@ -658,44 +639,39 @@ def apply_speech_corrections(text: str) -> str:
 # LLM Intent Classifier (replaces keyword-based action detection)
 # ---------------------------------------------------------------------------
 
-async def classify_intent(text: str, client: anthropic.AsyncAnthropic) -> dict:
-    """Classify every user message using Haiku LLM.
+async def classify_intent(text: str, runner: CopilotRunner | None = None) -> dict:
+    """Classify every user message using Copilot CLI. Falls back to heuristics."""
+    fallback = {"action": "chat", "target": text}
+    heuristic = detect_action_fast(text)
+    if heuristic:
+        fallback = heuristic
 
-    Returns: {"action": "open_terminal|browse|build|chat", "target": "description"}
-    """
+    if not runner or not runner.available:
+        return fallback
+
     try:
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=100,
+        response = await runner.chat_fast(
             system=(
-                "Classify this voice command. The user is talking to JARVIS, an AI assistant that can:\n"
-                "- Open Terminal and run Claude Code (coding AI tool)\n"
-                "- Open Chrome browser for web searches and URLs\n"
-                "- Build software projects via Claude Code in Terminal\n"
-                "- Research topics by opening Chrome search\n\n"
-                "Note: speech-to-text may produce errors like \"Cloud\" for \"Claude\", "
-                "\"Travis\" for \"JARVIS\", \"clock code\" for \"Claude Code\".\n\n"
-                "Return ONLY valid JSON: {\"action\": \"open_terminal|browse|build|chat\", "
-                "\"target\": \"description of what to do\"}\n"
-                "open_terminal = user wants to open terminal or launch Claude Code\n"
-                "browse = user wants to search the web, look something up, visit a URL\n"
-                "build = user wants to create/build a software project\n"
-                "chat = just conversation, questions, or anything else\n"
-                "If unclear, default to \"chat\"."
+                "Classify this voice command. JARVIS can:\n"
+                "- Open Terminal/PowerShell and run coding tasks via Copilot CLI\n"
+                "- Open Chrome for web searches and URLs\n"
+                "- Build or research projects via Copilot CLI\n"
+                "Return ONLY JSON: {\"action\": \"open_terminal|browse|build|chat\", \"target\": \"description\"}. "
+                "If unclear, default to chat."
             ),
             messages=[{"role": "user", "content": text}],
         )
-        raw = response.content[0].text.strip()
+        raw = response.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         data = json.loads(raw)
         return {
-            "action": data.get("action", "chat"),
-            "target": data.get("target", text),
+            "action": data.get("action", fallback["action"]),
+            "target": data.get("target", fallback["target"]),
         }
     except Exception as e:
         log.warning(f"Intent classification failed: {e}")
-        return {"action": "chat", "target": text}
+        return fallback
 
 
 # ---------------------------------------------------------------------------
@@ -792,7 +768,7 @@ async def _execute_browse(target: str):
 
 
 async def _execute_research(target: str, ws=None):
-    """Execute research via claude -p in background. Opens report and speaks when done."""
+    """Execute research via Copilot CLI in background. Opens report and speaks when done."""
     try:
         name = _generate_project_name(target)
         path = str(Path.home() / "Desktop" / name)
@@ -801,42 +777,27 @@ async def _execute_research(target: str, ws=None):
         prompt = (
             f"{target}\n\n"
             f"Research this thoroughly. Find REAL data — not made-up examples.\n"
-            f"Create a well-designed HTML file called `report.html` in the current directory.\n"
+            f"Return a complete HTML document (including <html> and <body>) that can be saved as report.html.\n"
             f"Dark theme, clean typography, organized sections, real links and sources.\n"
             f"The working directory is: {path}"
         )
 
-        log.info(f"Research started via claude -p in {path}")
+        log.info(f"Research started via Copilot in {path}")
 
-        process = await asyncio.create_subprocess_exec(
-            "claude", "-p", "--output-format", "text", "--dangerously-skip-permissions",
-            stdin=asyncio.subprocess.PIPE,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
+        result = await copilot_runner.chat_smart(
+            system="You are JARVIS. Produce a complete HTML research report with real sources and links.",
+            messages=[{"role": "user", "content": prompt}],
             cwd=path,
-        )
-
-        stdout, stderr = await asyncio.wait_for(
-            process.communicate(input=prompt.encode()),
             timeout=300,
         )
-
-        result = stdout.decode().strip()
         log.info(f"Research complete ({len(result)} chars)")
 
         recently_built.append({"name": name, "path": path, "time": time.time()})
 
-        # Find and open any HTML report
         report = Path(path) / "report.html"
-        if not report.exists():
-            # Check for any HTML file
-            html_files = list(Path(path).glob("*.html"))
-            if html_files:
-                report = html_files[0]
-
-        if report.exists():
-            await open_browser(f"file://{report}")
-            log.info(f"Opened {report.name} in browser")
+        report.write_text(result)
+        await open_browser(f"file://{report}")
+        log.info(f"Opened {report.name} in browser")
 
         # Notify via voice if WebSocket still connected
         if ws:
@@ -910,10 +871,10 @@ def _find_project_dir(project_name: str) -> str | None:
 
 
 async def _execute_prompt_project(project_name: str, prompt: str, work_session: WorkSession, ws, dispatch_id: int = None):
-    """Dispatch a prompt to Claude Code in a project directory.
+    """Dispatch a prompt to Copilot CLI in a project directory.
 
     Runs entirely in the background. JARVIS returns to conversation mode
-    immediately. When Claude Code finishes, JARVIS interrupts to report.
+    immediately. When Copilot CLI finishes, JARVIS interrupts to report.
     """
     try:
         project_dir = _find_project_dir(project_name)
@@ -943,7 +904,7 @@ async def _execute_prompt_project(project_name: str, prompt: str, work_session: 
         log.info(f"Dispatching to {project_name} in {project_dir}: {prompt[:80]}")
         dispatch_registry.update_status(dispatch_id, "building")
 
-        # Run claude -p in background
+        # Run Copilot CLI in background
         full_response = await dispatch.send(prompt)
         await dispatch.stop()
 
@@ -966,12 +927,10 @@ async def _execute_prompt_project(project_name: str, prompt: str, work_session: 
             dispatch_registry.update_status(dispatch_id, "failed" if full_response else "timeout", response=full_response or "")
             msg = f"Sir, I ran into an issue with {project_name}. {full_response[:150] if full_response else 'No response received.'}"
         else:
-            # Summarize via Haiku — don't read word for word
-            if anthropic_client:
+            # Summarize — don't read word for word
+            if copilot_runner.available:
                 try:
-                    summary = await anthropic_client.messages.create(
-                        model="claude-haiku-4-5-20251001",
-                        max_tokens=150,
+                    summary = await copilot_runner.chat_fast(
                         system=(
                             "You are JARVIS reporting back on what you found or built in a project. "
                             "Speak in first person — 'I found', 'I built', 'I reviewed'. "
@@ -979,12 +938,12 @@ async def _execute_prompt_project(project_name: str, prompt: str, work_session: 
                             "Be specific but concise — highlight the key findings or actions taken. "
                             "If there are multiple items, give the count and top 2-3 briefly. "
                             "End by asking how the user wants to proceed. "
-                            "NEVER read out URLs or localhost addresses. NEVER say 'Claude Code'. "
+                            "NEVER read out URLs or localhost addresses. NEVER say 'Copilot CLI'. "
                             "2-3 sentences max. No markdown. Natural spoken voice."
                         ),
-                        messages=[{"role": "user", "content": f"Project: {project_name}\nClaude Code reported:\n{full_response[:3000]}"}],
+                        messages=[{"role": "user", "content": f"Project: {project_name}\nCopilot CLI reported:\n{full_response[:3000]}"}],
                     )
-                    msg = summary.content[0].text
+                    msg = summary
                 except Exception:
                     msg = f"Sir, {project_name} finished. Here's the gist: {full_response[:200]}"
             else:
@@ -1021,33 +980,31 @@ async def _execute_prompt_project(project_name: str, prompt: str, work_session: 
 
 
 async def self_work_and_notify(session: WorkSession, prompt: str, ws):
-    """Run claude -p in background and notify via voice when done."""
+    """Run Copilot CLI in background and notify via voice when done."""
     try:
         full_response = await session.send(prompt)
         log.info(f"Background work complete ({len(full_response)} chars)")
 
         # Summarize and speak
-        if anthropic_client and full_response:
+        msg = "Work is complete, sir."
+        if copilot_runner.available and full_response:
             try:
-                summary = await anthropic_client.messages.create(
-                    model="claude-haiku-4-5-20251001",
-                    max_tokens=100,
-                    system="You are JARVIS. Summarize what you just completed in 1 sentence. First person — 'I built', 'I set up'. No markdown. Never say 'Claude Code'.",
-                    messages=[{"role": "user", "content": f"Claude Code completed:\n{full_response[:2000]}"}],
+                msg = await copilot_runner.chat_fast(
+                    system="You are JARVIS. Summarize what you just completed in 1 sentence. First person — 'I built', 'I set up'. No markdown. Never say 'Copilot CLI'.",
+                    messages=[{"role": "user", "content": f"Copilot CLI completed:\n{full_response[:2000]}"}],
                 )
-                msg = summary.content[0].text
             except Exception:
                 msg = "Work is complete, sir."
 
-            try:
-                audio = await synthesize_speech(msg)
-                if audio:
-                    await ws.send_json({"type": "status", "state": "speaking"})
-                    await ws.send_json({"type": "audio", "data": base64.b64encode(audio).decode(), "text": msg})
-                    await ws.send_json({"type": "status", "state": "idle"})
-                    log.info(f"JARVIS: {msg}")
-            except Exception:
-                pass
+        try:
+            audio = await synthesize_speech(msg)
+            if audio:
+                await ws.send_json({"type": "status", "state": "speaking"})
+                await ws.send_json({"type": "audio", "data": base64.b64encode(audio).decode(), "text": msg})
+                await ws.send_json({"type": "status", "state": "idle"})
+                log.info(f"JARVIS: {msg}")
+        except Exception:
+            pass
     except Exception as e:
         log.error(f"Background work failed: {e}")
 
@@ -1139,12 +1096,12 @@ async def synthesize_speech(text: str) -> Optional[bytes]:
 
 async def generate_response(
     text: str,
-    client: anthropic.AsyncAnthropic,
-    task_mgr: ClaudeTaskManager,
+    runner: CopilotRunner,
+    task_mgr: CopilotTaskManager,
     projects: list[dict],
     conversation_history: list[dict],
 ) -> str:
-    """Generate a JARVIS response using Anthropic API."""
+    """Generate a JARVIS response using the Copilot CLI."""
     now = datetime.now()
     current_time = now.strftime("%A, %B %d, %Y at %I:%M %p")
 
@@ -1186,14 +1143,9 @@ async def generate_response(
         messages = messages + [{"role": "user", "content": text}]
 
     try:
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=250,  # Extra room for [ACTION:X] tags
-            system=system,
-            messages=messages,
-        )
-        track_usage(response)
-        return response.content[0].text
+        response_text = await runner.chat_fast(system=system, messages=messages)
+        track_usage_text(system, messages, response_text)
+        return response_text
     except Exception as e:
         log.error(f"LLM error: {e}")
         return "Apologies, sir. I'm having trouble connecting to my language systems."
@@ -1204,8 +1156,14 @@ async def generate_response(
 # ---------------------------------------------------------------------------
 
 # Shared state
-task_manager = ClaudeTaskManager(max_concurrent=3)
-anthropic_client: Optional[anthropic.AsyncAnthropic] = None
+copilot_runner = CopilotRunner(
+    fast_model=COPILOT_MODEL_FAST,
+    smart_model=COPILOT_MODEL_SMART,
+    timeout=COPILOT_TIMEOUT,
+    enabled=COPILOT_CLI_ENABLED,
+)
+task_manager = CopilotTaskManager(copilot_runner, max_concurrent=3)
+qa_agent = QAAgent(copilot_runner)
 cached_projects: list[dict] = []
 recently_built: list[dict] = []  # [{"name": str, "path": str, "time": float}]
 dispatch_registry = DispatchRegistry()
@@ -1261,10 +1219,12 @@ def _cost_from_tokens(input_t: int, output_t: int) -> float:
     return (input_t / 1_000_000) * 0.80 + (output_t / 1_000_000) * 4.00
 
 
-def track_usage(response):
-    """Track token usage from an Anthropic API response."""
-    inp = getattr(response.usage, "input_tokens", 0) if hasattr(response, "usage") else 0
-    out = getattr(response.usage, "output_tokens", 0) if hasattr(response, "usage") else 0
+def track_usage_text(system: str, messages: list[dict], response_text: str):
+    """Track approximate usage based on character counts."""
+    input_chars = len(system) + sum(len(m.get("content", "")) for m in messages)
+    output_chars = len(response_text)
+    inp = int(input_chars / 4)  # rough token estimate
+    out = int(output_chars / 4)
     _session_tokens["input"] += inp
     _session_tokens["output"] += out
     _session_tokens["api_calls"] += 1
@@ -1380,20 +1340,9 @@ return windowList
 
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    global anthropic_client, cached_projects
-    if ANTHROPIC_API_KEY:
-        # Support both cloud API and local proxy (e.g., free-claude-code)
-        if ANTHROPIC_BASE_URL:
-            anthropic_client = anthropic.AsyncAnthropic(
-                api_key=ANTHROPIC_API_KEY,
-                base_url=ANTHROPIC_BASE_URL
-            )
-            log.info(f"Using local LLM proxy at {ANTHROPIC_BASE_URL}")
-        else:
-            anthropic_client = anthropic.AsyncAnthropic(api_key=ANTHROPIC_API_KEY)
-            log.info("Using Anthropic cloud API")
-    else:
-        log.warning("ANTHROPIC_API_KEY not set — LLM features disabled")
+    global cached_projects
+    if not copilot_runner.available:
+        log.warning("Copilot CLI not available — LLM features will be limited.")
     cached_projects = []
 
     # Start context refresh in a separate thread (never touches event loop)
@@ -1515,8 +1464,12 @@ def detect_action_fast(text: str) -> dict | None:
     if len(words) > 12:
         return None  # Long messages are conversation, not commands
 
-    # Terminal / Claude Code — explicit open requests
-    if any(w in t for w in ["open claude", "start claude", "launch claude", "run claude"]):
+    # Terminal / Copilot CLI — explicit open requests
+    if any(w in t for w in [
+        "open claude", "start claude", "launch claude", "run claude",
+        "open copilot", "start copilot", "launch copilot", "run copilot",
+        "open the terminal", "open up the terminal", "open terminal", "start clock code", "open cloud code",
+    ]):
         return {"action": "open_terminal"}
 
     # Direct terminal command (short, explicit)
@@ -1526,6 +1479,14 @@ def detect_action_fast(text: str) -> dict | None:
         return {"action": "terminal_command", "target": t.replace("execute", "", 1).strip()}
     if t.startswith("powershell "):
         return {"action": "terminal_command", "target": t.replace("powershell", "", 1).strip()}
+
+    # Browse / search
+    if any(k in t for k in ["search for", "google", "look up", "go to", "visit", "browse"]):
+        return {"action": "browse", "target": text}
+
+    # Build intent
+    if "build" in t or "create" in t or "make" in t:
+        return {"action": "build", "target": text}
 
     # Show recent build
     if any(w in t for w in ["show me what you built", "pull up what you made", "open what you built"]):
@@ -1576,7 +1537,7 @@ def detect_action_fast(text: str) -> dict | None:
 # -- Action Handlers -------------------------------------------------------
 
 async def handle_open_terminal() -> str:
-    result = await open_terminal("claude --dangerously-skip-permissions")
+    result = await open_terminal("copilot")
     return result["confirmation"]
 
 
@@ -1590,19 +1551,14 @@ async def handle_build(target: str) -> str:
     path = str(Path.home() / "Desktop" / name)
     os.makedirs(path, exist_ok=True)
 
-    # Write CLAUDE.md with clear instructions
-    claude_md = Path(path) / "CLAUDE.md"
-    claude_md.write_text(f"# Task\n\n{target}\n\nBuild this completely. If web app, make index.html work standalone.\n")
-
-    # Write prompt to a file, then pipe it to claude -p
-    # This avoids all shell escaping issues
+    # Write prompt to a file so Copilot can read it cleanly
     prompt_file = Path(path) / ".jarvis_prompt.txt"
     prompt_file.write_text(target)
 
     script = (
         'tell application "Terminal"\n'
         "    activate\n"
-        f'    do script "cd {path} && cat .jarvis_prompt.txt | claude -p --dangerously-skip-permissions"\n'
+        f'    do script "cd {path} && copilot chat --message \\\"$(cat .jarvis_prompt.txt)\\\""\n'
         "end tell"
     )
     await asyncio.create_subprocess_exec(
@@ -1612,7 +1568,7 @@ async def handle_build(target: str) -> str:
     )
 
     recently_built.append({"name": name, "path": path, "time": time.time()})
-    return f"On it, sir. Claude Code is working in {name}."
+    return f"On it, sir. Copilot CLI is working in {name}."
 
 
 async def handle_show_recent() -> str:
@@ -1736,8 +1692,8 @@ async def _do_mail_lookup() -> str:
 
 async def _do_screen_lookup() -> str:
     """Screen describe — runs in thread."""
-    if anthropic_client:
-        return await describe_screen(anthropic_client)
+    if copilot_runner.available:
+        return await describe_screen(copilot_runner)
     windows = await get_active_windows()
     if windows:
         apps = set(w["app"] for w in windows)
@@ -1825,16 +1781,13 @@ async def handle_browse(text: str, target: str) -> str:
     return "Searching for that, sir."
 
 
-async def handle_research(text: str, target: str, client: anthropic.AsyncAnthropic) -> str:
-    """Deep research with Opus — write results to HTML, open in browser."""
+async def handle_research(text: str, target: str, runner: CopilotRunner) -> str:
+    """Deep research via Copilot CLI — write results to HTML, open in browser."""
     try:
-        research_response = await client.messages.create(
-            model="claude-opus-4-6",
-            max_tokens=2000,
+        research_text = await runner.chat_smart(
             system=f"You are JARVIS, researching a topic for {USER_NAME}. Be thorough, organized, and cite sources where possible.",
             messages=[{"role": "user", "content": f"Research this thoroughly:\n\n{target}"}],
         )
-        research_text = research_response.content[0].text
 
         import html as _html
         html_content = f"""<!DOCTYPE html>
@@ -1854,7 +1807,7 @@ blockquote {{ border-left: 3px solid #0ea5e9; margin-left: 0; padding-left: 16px
 <h1>Research: {_html.escape(target[:80])}</h1>
 <div>{research_text.replace(chr(10), '<br>')}</div>
 <hr style="border-color:#222;margin-top:40px">
-<p style="color:#555;font-size:0.8em">Researched by JARVIS using Claude Opus &bull; {datetime.now().strftime('%B %d, %Y %I:%M %p')}</p>
+<p style="color:#555;font-size:0.8em">Researched by JARVIS using Copilot CLI &bull; {datetime.now().strftime('%B %d, %Y %I:%M %p')}</p>
 </body></html>"""
 
         results_file = Path.home() / "Desktop" / ".jarvis_research.html"
@@ -1864,13 +1817,11 @@ blockquote {{ border-left: 3px solid #0ea5e9; margin-left: 0; padding-left: 16px
         await open_browser(f"file://{results_file}", browser_name)
 
         # Short voice summary via Haiku
-        summary = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=80,
+        summary = await runner.chat_fast(
             system="Summarize this research in ONE sentence for voice. No markdown.",
             messages=[{"role": "user", "content": research_text[:2000]}],
         )
-        return summary.content[0].text + " Full results are in your browser, sir."
+        return summary + " Full results are in your browser, sir."
 
     except Exception as e:
         log.error(f"Research failed: {e}")
@@ -1898,7 +1849,7 @@ async def voice_handler(ws: WebSocket):
     await ws.accept()
     task_manager.register_websocket(ws)
     history: list[dict] = []
-    work_session = WorkSession()
+    work_session = WorkSession(copilot_runner)
     planner = TaskPlanner()
 
     # Response cancellation — when new input arrives, cancel current response
@@ -2051,31 +2002,31 @@ async def voice_handler(ws: WebSocket):
                     else:
                         response_text = "Already in conversation mode, sir."
 
-                # ── WORK MODE: speech → claude -p → Haiku summary → JARVIS voice ──
+                # ── WORK MODE: speech → Copilot CLI → summary → JARVIS voice ──
                 elif work_session.active:
                     if is_casual_question(user_text):
-                        # Quick chat — bypass claude -p, use Haiku
+                        # Quick chat — bypass work mode, use fast Copilot
                         response_text = await generate_response(
-                            user_text, anthropic_client, task_manager,
+                            user_text, copilot_runner, task_manager,
                             cached_projects, history,
                         )
                     else:
-                        # Send to claude -p (full power)
+                        # Send to Copilot CLI (project-aware)
                         await ws.send_json({"type": "status", "state": "working"})
-                        log.info(f"Work mode → claude -p: {user_text[:80]}")
+                        log.info(f"Work mode → Copilot: {user_text[:80]}")
 
                         full_response = await work_session.send(user_text)
 
-                        # Detect if Claude Code is stalling (asking questions instead of building)
-                        if full_response and anthropic_client:
+                        # Detect if Copilot CLI is stalling (asking questions instead of building)
+                        if full_response:
                             stall_words = ["which option", "would you prefer", "would you like me to",
                                            "before I proceed", "before proceeding", "should I",
                                            "do you want me to", "let me know", "please confirm",
                                            "which approach", "what would you"]
                             is_stalling = any(w in full_response.lower() for w in stall_words)
                             if is_stalling and work_session._message_count >= 2:
-                                # Claude Code keeps asking — push it to build
-                                log.info("Claude Code stalling — pushing to build")
+                                # Copilot CLI keeps asking — push it to build
+                                log.info("Copilot CLI stalling — pushing to build")
                                 push_response = await work_session.send(
                                     "Stop asking questions. Use your best judgment and start building now. "
                                     "Write the actual code files. Go with the simplest reasonable approach."
@@ -2083,30 +2034,27 @@ async def voice_handler(ws: WebSocket):
                                 if push_response:
                                     full_response = push_response
 
-                        # Auto-open any localhost URLs Claude Code mentions
+                        # Auto-open any localhost URLs Copilot CLI mentions
                         import re as _re
                         localhost_match = _re.search(r'https?://localhost:\d+', full_response or "")
                         if localhost_match:
                             asyncio.create_task(_execute_browse(localhost_match.group(0)))
                             log.info(f"Auto-opening {localhost_match.group(0)}")
 
-                        # Always summarize work mode responses via Haiku
-                        if full_response and anthropic_client:
+                        # Always summarize work mode responses via Copilot
+                        if full_response and copilot_runner.available:
                             try:
-                                summary = await anthropic_client.messages.create(
-                                    model="claude-haiku-4-5-20251001",
-                                    max_tokens=100,
+                                response_text = await copilot_runner.chat_fast(
                                     system=(
                                         f"You are JARVIS reporting to the user ({USER_NAME}). Summarize what happened in 1-2 sentences. "
                                         "Speak in first person — 'I built', 'I found', 'I set up'. "
                                         "You are talking TO THE USER, not to a coding tool. "
                                         "NEVER give instructions like 'go ahead and build' or 'set up the frontend' — those are NOT for the user. "
-                                        "NEVER say 'Claude Code'. NEVER output [ACTION:...] tags. "
+                                        "NEVER say 'Copilot CLI'. NEVER output [ACTION:...] tags. "
                                         "NEVER read out URLs. No markdown. British precision."
                                     ),
-                                    messages=[{"role": "user", "content": f"Claude Code said:\n{full_response[:2000]}"}],
+                                    messages=[{"role": "user", "content": f"Copilot CLI said:\n{full_response[:2000]}"}],
                                 )
-                                response_text = summary.content[0].text
                             except Exception:
                                 response_text = full_response[:200]
                         else:
@@ -2156,11 +2104,11 @@ async def voice_handler(ws: WebSocket):
                         else:
                             response_text = "Understood, sir."
                     else:
-                        if not anthropic_client:
-                            response_text = "API key not configured."
+                        if not copilot_runner.available:
+                            response_text = "Copilot CLI not configured."
                         else:
                             response_text = await generate_response(
-                                user_text, anthropic_client, task_manager,
+                                user_text, copilot_runner, task_manager,
                                 cached_projects, history,
                             )
 
@@ -2294,8 +2242,8 @@ async def voice_handler(ws: WebSocket):
                 history.append({"role": "assistant", "content": response_text})
 
                 # Extract memories in background (doesn't block response)
-                if anthropic_client and len(user_text) > 15:
-                    asyncio.create_task(extract_memories(user_text, response_text, anthropic_client))
+                if copilot_runner.available and len(user_text) > 15:
+                    asyncio.create_task(extract_memories(user_text, response_text, copilot_runner))
 
                 # TTS
                 tts = strip_markdown_for_tts(response_text)
@@ -2392,8 +2340,10 @@ class PreferencesUpdate(BaseModel):
 @app.post("/api/settings/keys")
 async def api_settings_keys(body: KeyUpdate):
     allowed = {
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_BASE_URL",
+        "COPILOT_CLI_ENABLED",
+        "COPILOT_MODEL_FAST",
+        "COPILOT_MODEL_SMART",
+        "COPILOT_TIMEOUT",
         "FISH_API_KEY",
         "FISH_VOICE_ID",
         "TTS_BASE_URL",
@@ -2412,15 +2362,20 @@ async def api_settings_keys(body: KeyUpdate):
     _write_env_key(body.key_name, body.key_value)
     return {"success": True}
 
-@app.post("/api/settings/test-anthropic")
-async def api_test_anthropic(body: KeyTest):
-    key = body.key_value or os.getenv("ANTHROPIC_API_KEY", "")
-    if not key:
-        return {"valid": False, "error": "No key provided"}
+@app.post("/api/settings/test-copilot")
+async def api_test_copilot(_: KeyTest):
+    import shutil as _shutil
+    cmd = _shutil.which("copilot") or _shutil.which("copilot.cmd")
+    if not cmd:
+        return {"valid": False, "error": "Copilot CLI not found on PATH"}
     try:
-        client = anthropic.AsyncAnthropic(api_key=key)
-        await client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=10, messages=[{"role": "user", "content": "Hi"}])
-        return {"valid": True}
+        proc = await asyncio.create_subprocess_exec(
+            cmd, "--help",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        await asyncio.wait_for(proc.communicate(), timeout=10)
+        return {"valid": proc.returncode == 0, "error": "" if proc.returncode == 0 else "Copilot CLI returned non-zero exit"}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 
@@ -2449,7 +2404,7 @@ async def api_test_fish(body: KeyTest):
 async def api_settings_status():
     import shutil as _shutil
     _, env_dict = _read_env()
-    claude_installed = _shutil.which("claude") is not None
+    copilot_installed = _shutil.which("copilot") is not None or _shutil.which("copilot.cmd") is not None
     calendar_ok = mail_ok = notes_ok = False
     try: get_todays_events(); calendar_ok = True
     except Exception: pass
@@ -2463,7 +2418,7 @@ async def api_settings_status():
     try: task_count = len(get_open_tasks())
     except Exception: pass
     return {
-        "claude_code_installed": claude_installed,
+        "copilot_cli_installed": copilot_installed,
         "calendar_accessible": calendar_ok,
         "mail_accessible": mail_ok,
         "notes_accessible": notes_ok,
@@ -2472,8 +2427,9 @@ async def api_settings_status():
         "server_port": 8340,
         "uptime_seconds": int(time.time() - _session_start),
         "env_keys_set": {
-            "anthropic": bool(env_dict.get("ANTHROPIC_API_KEY", "").strip() and env_dict.get("ANTHROPIC_API_KEY", "") != "your-anthropic-api-key-here"),
-            "anthropic_base_url": env_dict.get("ANTHROPIC_BASE_URL", ""),
+            "copilot_enabled": env_dict.get("COPILOT_CLI_ENABLED", ""),
+            "copilot_model_fast": env_dict.get("COPILOT_MODEL_FAST", ""),
+            "copilot_model_smart": env_dict.get("COPILOT_MODEL_SMART", ""),
             "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
             "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
             "tts_base_url": env_dict.get("TTS_BASE_URL", ""),
@@ -2527,7 +2483,7 @@ async def api_fix_self():
     script = (
         'tell application "Terminal"\n'
         '    activate\n'
-        f'    do script "cd {jarvis_dir} && claude --dangerously-skip-permissions"\n'
+        f'    do script "cd {jarvis_dir} && copilot"\n'
         'end tell'
     )
     await asyncio.create_subprocess_exec(

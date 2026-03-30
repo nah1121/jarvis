@@ -4,7 +4,7 @@ End-to-end pipeline test for the JARVIS intelligence layer.
 Exercises the full pipeline: planning mode detection -> prompt assembly ->
 QA verification -> success tracking.
 
-Claude Code execution is mocked for fast, repeatable testing.
+Copilot CLI execution is mocked for fast, repeatable testing.
 """
 
 import os
@@ -128,7 +128,7 @@ def test_template_no_match():
 
 @pytest.mark.asyncio
 async def test_full_pipeline_mocked(temp_dir, tracker):
-    """Full pipeline with mocked Claude Code execution."""
+    """Full pipeline with mocked Copilot CLI execution."""
     # 1. Planning mode detection
     decision = await detect_planning_mode("Create a Python hello world script")
     assert decision.task_type in ("build", "simple")
@@ -141,7 +141,7 @@ async def test_full_pipeline_mocked(temp_dir, tracker):
     tmpl = get_template("build", "create a Python script")
     # May or may not find a matching template - that's fine
 
-    # 4. Mock Claude Code execution - simulate it creating hello.py
+    # 4. Mock Copilot CLI execution - simulate it creating hello.py
     hello_path = Path(temp_dir, "hello.py")
     hello_path.write_text('print("Hello, World!")\n')
 

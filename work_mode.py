@@ -1,19 +1,20 @@
 """
-JARVIS Work Mode — persistent claude -p sessions tied to projects.
+JARVIS Work Mode — persistent Copilot CLI sessions tied to projects.
 
 JARVIS can connect to any project directory and maintain a conversation
-with Claude Code. Uses --continue to resume the most recent session
-in that directory, so context persists across messages.
+with Copilot CLI. Conversation history is threaded and included in every
+Copilot call so context persists across messages.
 
-The user sees Claude Code working in their Terminal window.
+The user sees Copilot CLI working in their Terminal window.
 JARVIS reads the responses via subprocess, summarizes, and reports back.
 """
 
 import asyncio
 import json
 import logging
-import shutil
 from pathlib import Path
+
+from copilot_access import CopilotRunner, CopilotError
 
 log = logging.getLogger("jarvis.work_mode")
 
@@ -21,18 +22,16 @@ SESSION_FILE = Path(__file__).parent / "data" / "active_session.json"
 
 
 class WorkSession:
-    """A claude -p session tied to a project directory.
+    """A Copilot CLI session tied to a project directory."""
 
-    Each project gets its own session. JARVIS can switch between projects
-    and --continue picks up where the last message left off.
-    """
-
-    def __init__(self):
+    def __init__(self, runner: CopilotRunner):
+        self._runner = runner
         self._active = False
         self._working_dir: str | None = None
         self._project_name: str | None = None
         self._message_count = 0  # Track if this is first message (no --continue)
         self._status = "idle"  # idle, working, done
+        self._history: list[dict] = []
 
     @property
     def active(self) -> bool:
@@ -46,6 +45,10 @@ class WorkSession:
     def status(self) -> str:
         return self._status
 
+    @property
+    def working_dir(self) -> str | None:
+        return self._working_dir
+
     async def start(self, working_dir: str, project_name: str = None):
         """Start or switch to a project session."""
         self._working_dir = working_dir
@@ -53,61 +56,36 @@ class WorkSession:
         self._active = True
         self._message_count = 0
         self._status = "idle"
+        self._history = []
         log.info(f"Work mode started: {self._project_name} ({working_dir})")
 
     async def send(self, user_text: str) -> str:
-        """Send a message to claude -p and get the full response.
-
-        First message in a session: fresh claude -p
-        Subsequent messages: claude -p --continue (resumes last session in dir)
-        """
-        claude_path = shutil.which("claude")
-        if not claude_path:
-            return "Claude CLI not found on this system."
-
-        cmd = [
-            claude_path, "-p",
-            "--output-format", "text",
-            "--dangerously-skip-permissions",
-        ]
-
-        # Use --continue for subsequent messages to maintain context
-        if self._message_count > 0:
-            cmd.append("--continue")
-
+        """Send a message to Copilot CLI and get the full response."""
+        if not self._runner.available:
+            return "Copilot CLI not found on this system."
         self._status = "working"
 
         try:
-            process = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            messages = self._history[-8:] + [{"role": "user", "content": user_text}]
+            response = await self._runner.chat_smart(
+                system="You are JARVIS coding through Copilot CLI. Provide concise, actionable responses and code changes. No markdown.",
+                messages=messages,
                 cwd=self._working_dir,
-            )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=user_text.encode()),
                 timeout=300,
             )
-
-            response = stdout.decode().strip()
             self._message_count += 1
             self._status = "done"
-
-            if process.returncode != 0:
-                error = stderr.decode().strip()[:200]
-                log.error(f"claude -p error: {error}")
-                self._status = "error"
-                return f"Hit a problem, sir: {error}"
-
-            log.info(f"Claude Code response for {self._project_name} ({len(response)} chars)")
+            self._history.extend([
+                {"role": "user", "content": user_text},
+                {"role": "assistant", "content": response},
+            ])
+            log.info(f"Copilot CLI response for {self._project_name} ({len(response)} chars)")
             return response
 
-        except asyncio.TimeoutError:
-            log.error("claude -p timed out after 300s")
-            self._status = "timeout"
-            return "That's taking longer than expected, sir. The operation timed out."
+        except CopilotError as e:
+            log.error(f"Copilot work mode error: {e}")
+            self._status = "error"
+            return f"Hit a problem, sir: {str(e)}"
         except Exception as e:
             log.error(f"Work mode error: {e}")
             self._status = "error"
@@ -121,6 +99,7 @@ class WorkSession:
         self._project_name = None
         self._message_count = 0
         self._status = "idle"
+        self._history = []
         log.info(f"Work mode ended for {project}")
 
     def _save_session(self):
@@ -162,7 +141,7 @@ class WorkSession:
 def is_casual_question(text: str) -> bool:
     """Detect if a message is casual chat vs work-related.
 
-    Casual questions go to Haiku (fast). Work goes to claude -p (powerful).
+    Casual questions go to fast Copilot responses. Work goes to Copilot work mode (project-aware).
     """
     t = text.lower().strip()
 

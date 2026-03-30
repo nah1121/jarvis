@@ -17,6 +17,8 @@ import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
+from copilot_access import CopilotRunner
+
 log = logging.getLogger("jarvis.memory")
 
 DB_PATH = Path(__file__).parent / "data" / "jarvis.db"
@@ -402,19 +404,17 @@ def format_plan_for_voice(tasks: list[dict], events: list[dict]) -> str:
 # Memory extraction — learn from conversations
 # ---------------------------------------------------------------------------
 
-async def extract_memories(user_text: str, jarvis_response: str, anthropic_client) -> list[str]:
+async def extract_memories(user_text: str, jarvis_response: str, runner: CopilotRunner) -> list[str]:
     """After a conversation turn, extract any facts worth remembering.
 
     Uses Haiku to decide if anything in the exchange is worth storing.
     Returns list of memories stored.
     """
-    if not anthropic_client or len(user_text) < 15:
+    if not runner or not runner.available or len(user_text) < 15:
         return []
 
     try:
-        response = await anthropic_client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=200,
+        text = await runner.chat_fast(
             system=(
                 "Extract facts worth remembering from this conversation. "
                 "Only extract CONCRETE facts: preferences, decisions, names, dates, plans, goals. "
@@ -424,8 +424,7 @@ async def extract_memories(user_text: str, jarvis_response: str, anthropic_clien
             ),
             messages=[{"role": "user", "content": f"User: {user_text}\nJARVIS: {jarvis_response}"}],
         )
-
-        text = response.content[0].text.strip()
+        text = text.strip()
         # Parse JSON
         if text.startswith("["):
             items = json.loads(text)

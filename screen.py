@@ -12,6 +12,7 @@ import json
 import logging
 import tempfile
 from pathlib import Path
+from copilot_access import CopilotRunner
 
 log = logging.getLogger("jarvis.screen")
 
@@ -151,48 +152,8 @@ async def take_screenshot(display_only: bool = True) -> str | None:
             pass
 
 
-async def describe_screen(anthropic_client) -> str:
-    """Describe what's on the user's screen.
-
-    Tries screenshot + vision first. Falls back to window list + LLM summary.
-    """
-    # Try screenshot + vision
-    screenshot_b64 = await take_screenshot()
-    if screenshot_b64 and anthropic_client:
-        try:
-            response = await anthropic_client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=300,
-                system=(
-                    "You are JARVIS analyzing a screenshot of the user's desktop. "
-                    "Describe what you see concisely: which apps are open, what the user "
-                    "appears to be working on, any notable content visible. "
-                    "Be specific about app names, file names, URLs, code, or documents visible. "
-                    "2-4 sentences max. No markdown."
-                ),
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "image",
-                            "source": {
-                                "type": "base64",
-                                "media_type": "image/png",
-                                "data": screenshot_b64,
-                            },
-                        },
-                        {
-                            "type": "text",
-                            "text": "What's on my screen right now?",
-                        },
-                    ],
-                }],
-            )
-            return response.content[0].text
-        except Exception as e:
-            log.warning(f"Vision call failed, falling back to window list: {e}")
-
-    # Fallback: get window list and have LLM summarize
+async def describe_screen(copilot_runner: CopilotRunner) -> str:
+    """Describe what's on the user's screen using window/app context."""
     windows = await get_active_windows()
     apps = await get_running_apps()
 
@@ -212,18 +173,16 @@ async def describe_screen(anthropic_client) -> str:
         if bg_apps:
             context_parts.append(f"Background apps: {', '.join(bg_apps)}")
 
-    if anthropic_client and context_parts:
+    if copilot_runner.available and context_parts:
         try:
-            response = await anthropic_client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=100,
+            response = await copilot_runner.chat_fast(
                 system=(
                     "You are JARVIS. Given the user's open windows and apps, summarize "
                     "what they appear to be working on in 1-2 sentences. Natural voice, no markdown."
                 ),
                 messages=[{"role": "user", "content": "Open windows:\n" + "\n".join(context_parts)}],
             )
-            return response.content[0].text
+            return response
         except Exception:
             pass
 

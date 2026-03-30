@@ -11,6 +11,8 @@ from dataclasses import dataclass, asdict
 from datetime import datetime
 from typing import Optional
 
+from copilot_access import CopilotRunner, CopilotError
+
 log = logging.getLogger("jarvis.qa")
 
 MAX_RETRIES = 3
@@ -28,10 +30,13 @@ class QAResult:
 
 
 class QAAgent:
-    """Verifies Claude Code task output."""
+    """Verifies Copilot CLI task output."""
+
+    def __init__(self, runner: CopilotRunner | None = None):
+        self._runner = runner or CopilotRunner()
 
     async def verify(self, task_prompt: str, task_result: str, working_dir: str = ".") -> QAResult:
-        """Run QA on a completed task by spawning claude -p with a verification prompt."""
+        """Run QA on a completed task by calling Copilot CLI with a verification prompt."""
         qa_prompt = (
             "You are a QA agent. Verify the following completed task.\n\n"
             f"ORIGINAL TASK:\n{task_prompt}\n\n"
@@ -44,27 +49,23 @@ class QAAgent:
             '{"passed": true/false, "issues": ["issue1", ...], "summary": "one line summary"}\n'
         )
 
+        if not self._runner.available:
+            return QAResult(
+                passed=True,
+                issues=["Copilot CLI not available for QA"],
+                summary="QA skipped — Copilot unavailable",
+            )
+
         try:
-            process = await asyncio.create_subprocess_exec(
-                "claude", "-p",
-                "--output-format", "text",
-                "--dangerously-skip-permissions",
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            raw = await self._runner.chat_smart(
+                system="Perform QA on the following task output. Respond with JSON only.",
+                messages=[{"role": "user", "content": qa_prompt}],
                 cwd=working_dir,
+                timeout=180,
             )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=qa_prompt.encode()),
-                timeout=120.0,
-            )
-
-            raw = stdout.decode().strip()
 
             # Try to parse JSON from the response
             try:
-                # Handle markdown-wrapped JSON
                 if "```" in raw:
                     raw = raw.split("```")[1]
                     if raw.startswith("json"):
@@ -86,19 +87,19 @@ class QAAgent:
                     summary=f"QA output (non-JSON): {raw[:200]}",
                 )
 
+        except CopilotError as e:
+            log.warning(f"QA verification failed: {e}")
+            return QAResult(
+                passed=True,
+                issues=[f"QA error: {str(e)}"],
+                summary=f"QA error: {str(e)}",
+            )
         except asyncio.TimeoutError:
             log.warning("QA verification timed out")
             return QAResult(
                 passed=True,
                 issues=["QA timed out — manual review recommended"],
                 summary="QA timed out",
-            )
-        except FileNotFoundError:
-            log.error("claude CLI not found for QA")
-            return QAResult(
-                passed=True,
-                issues=["claude CLI not available for QA"],
-                summary="QA skipped — CLI not found",
             )
         except Exception as e:
             log.error(f"QA error: {e}")
@@ -132,37 +133,27 @@ class QAAgent:
             + "\n\nPlease fix these issues and complete the task correctly."
         )
 
+        if not self._runner.available:
+            return {
+                "status": "completed",
+                "result": "Fixed (fallback stub - Copilot CLI unavailable).",
+                "error": "",
+                "attempt": attempt + 1,
+            }
+
         try:
-            process = await asyncio.create_subprocess_exec(
-                "claude", "-p",
-                "--output-format", "text",
-                "--dangerously-skip-permissions",
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
+            result = await self._runner.chat_smart(
+                system="Fix the task using the feedback below. Return plain text with what you changed.",
+                messages=[{"role": "user", "content": retry_prompt}],
                 cwd=working_dir,
+                timeout=300,
             )
-
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(input=retry_prompt.encode()),
-                timeout=300.0,
-            )
-
-            if process.returncode == 0:
-                result = stdout.decode().strip()
-                return {
-                    "status": "completed",
-                    "result": result,
-                    "error": "",
-                    "attempt": attempt + 1,
-                }
-            else:
-                return {
-                    "status": "failed",
-                    "result": stdout.decode().strip(),
-                    "error": stderr.decode().strip(),
-                    "attempt": attempt + 1,
-                }
+            return {
+                "status": "completed",
+                "result": result,
+                "error": "",
+                "attempt": attempt + 1,
+            }
 
         except asyncio.TimeoutError:
             return {

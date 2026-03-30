@@ -15,9 +15,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
-import anthropic
-
 from templates import TEMPLATES, get_template
+from copilot_access import CopilotRunner
 
 log = logging.getLogger("jarvis.planner")
 
@@ -65,14 +64,14 @@ class PlanningDecision:
 
 async def detect_planning_mode(
     user_text: str,
-    client: Optional[anthropic.AsyncAnthropic] = None,
+    runner: Optional[CopilotRunner] = None,
     force_bypass: bool = False,
 ) -> PlanningDecision:
     """Classify a user request as simple (execute now) or complex (needs planning).
 
     Args:
         user_text: The raw user request.
-        client: Anthropic async client for Haiku classification.
+        client: Copilot runner for classification.
         force_bypass: If True, skip planning and apply smart defaults.
 
     Returns:
@@ -93,9 +92,9 @@ async def detect_planning_mode(
             smart_defaults=defaults,
         )
 
-    # Use Haiku for accurate classification
-    if client:
-        return await _classify_planning_mode_llm(user_text, client)
+    # Use Copilot for accurate classification
+    if runner and runner.available:
+        return await _classify_planning_mode_llm(user_text, runner)
 
     # Fallback: keyword-based heuristic (no API available)
     return _classify_planning_mode_heuristic(text_lower)
@@ -124,13 +123,11 @@ def _quick_classify(text: str) -> str:
 
 
 async def _classify_planning_mode_llm(
-    text: str, client: anthropic.AsyncAnthropic
+    text: str, runner: CopilotRunner
 ) -> PlanningDecision:
-    """Use Haiku to classify request and identify missing info."""
+    """Use Copilot to classify request and identify missing info."""
     try:
-        response = await client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=400,
+        raw = await runner.chat_fast(
             system=(
                 "You analyze development requests to decide if they need planning.\n"
                 "Respond with JSON only, no markdown fences.\n\n"
@@ -158,7 +155,6 @@ async def _classify_planning_mode_llm(
             ),
             messages=[{"role": "user", "content": text}],
         )
-        raw = response.content[0].text.strip()
         if raw.startswith("```"):
             raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
         data = json.loads(raw)
@@ -385,7 +381,7 @@ async def gather_project_context(project_path: str) -> dict:
 # ---------------------------------------------------------------------------
 
 class TaskPlanner:
-    """Manages the planning conversation before spawning Claude Code."""
+    """Manages the planning conversation before spawning Copilot CLI tasks."""
 
     def __init__(self):
         self.active_plan: Optional[Plan] = None
@@ -398,7 +394,7 @@ class TaskPlanner:
         self,
         user_request: str,
         projects: list[dict],
-        client: anthropic.AsyncAnthropic,
+        runner: CopilotRunner,
     ) -> dict:
         """Analyze request and determine what questions to ask.
 
@@ -410,8 +406,8 @@ class TaskPlanner:
             "needs_questions": bool,
         }
         """
-        # Classify the request with Haiku
-        classification = await self._classify_request(user_request, client)
+        # Classify the request with Copilot
+        classification = await self._classify_request(user_request, runner)
         task_type = classification.get("task_type", "build")
         detected_project = classification.get("project", "")
         inferred_answers = classification.get("inferred", {})
@@ -673,12 +669,10 @@ class TaskPlanner:
 
     # -- Private helpers --
 
-    async def _classify_request(self, text: str, client: anthropic.AsyncAnthropic) -> dict:
-        """Use Haiku to classify request type and extract known info."""
+    async def _classify_request(self, text: str, client: CopilotRunner) -> dict:
+        """Use Copilot to classify request type and extract known info."""
         try:
-            response = await client.messages.create(
-                model="claude-haiku-4-5-20251001",
-                max_tokens=300,
+            raw = await client.chat_fast(
                 system=(
                     "Classify this development request. Respond with JSON only, no markdown.\n"
                     "Fields:\n"
@@ -687,12 +681,11 @@ class TaskPlanner:
                     "- inferred: dict of any info you can extract from the request "
                     "(keys: tech_stack, details, error, target, goal, depth, output_format)\n"
                     "Only include inferred keys that are clearly stated.\n"
-                    'Example: {"task_type": "build", "project": "roofo", '
-                    '"inferred": {"tech_stack": "React", "details": "landing page with hero and pricing"}}'
+                    'Example: {\"task_type\": \"build\", \"project\": \"roofo\", '
+                    '\"inferred\": {\"tech_stack\": \"React\", \"details\": \"landing page with hero and pricing\"}}'
                 ),
                 messages=[{"role": "user", "content": text}],
             )
-            raw = response.content[0].text.strip()
             if raw.startswith("```"):
                 raw = raw.split("\n", 1)[1].rsplit("```", 1)[0].strip()
             return json.loads(raw)
