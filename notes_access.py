@@ -6,6 +6,7 @@ CANNOT edit or delete existing notes (safety).
 
 WINDOWS COMPATIBILITY: On Windows, all notes functions return empty results.
 macOS-specific AppleScript functionality is disabled.
+Terminal automation now relies on PowerShell on Windows; notes access stays read-only stub.
 """
 
 import asyncio

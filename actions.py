@@ -1,32 +1,53 @@
 """
-JARVIS Action Executor — AppleScript-based system actions.
+JARVIS Action Executor — system actions (AppleScript on macOS, PowerShell on Windows).
 
 Execute actions IMMEDIATELY, before generating any LLM response.
 Each function returns {"success": bool, "confirmation": str}.
 
-WINDOWS COMPATIBILITY: Terminal and Finder automation is disabled on Windows.
-Browser automation (Playwright) still works.
+WINDOWS: Terminal automation uses PowerShell (powershell.exe) with safety checks.
+macOS: AppleScript automation remains for Terminal/Finder integrations.
 """
 
 import asyncio
 import logging
 import os
+import platform
 import re
 import sys
 import time
 from pathlib import Path
 from urllib.parse import quote
 
+from powershell_access import format_command_output, run_shell_command
+
 log = logging.getLogger("jarvis.actions")
 
 # Detect platform
-IS_WINDOWS = sys.platform.startswith("win")
-IS_MACOS = sys.platform == "darwin"
+PLATFORM = platform.system()
+IS_WINDOWS = PLATFORM.lower().startswith("win")
+IS_MACOS = PLATFORM == "Darwin"
+
+TERMINAL_TIMEOUT = int(os.getenv("TERMINAL_TIMEOUT", "30") or 30)
 
 if IS_WINDOWS:
-    log.info("Windows detected - Terminal/Finder automation disabled (macOS only)")
+    log.info("Windows detected - PowerShell automation enabled for terminal actions")
 
 DESKTOP_PATH = Path.home() / "Desktop"
+
+
+async def execute_terminal_command(command: str, cwd: str | None = None) -> dict:
+    """Run a terminal command (PowerShell on Windows, bash on macOS)."""
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(
+        None,
+        lambda: run_shell_command(command, cwd=cwd, timeout=TERMINAL_TIMEOUT),
+    )
+    confirmation = format_command_output(result)
+    return {
+        "success": bool(result.get("success")) and not result.get("blocked"),
+        "confirmation": confirmation,
+        "result": result,
+    }
 
 
 async def _mark_terminal_as_jarvis(revert_after: float = 5.0):
@@ -96,14 +117,16 @@ async def _revert_terminal_theme(profile_name: str):
 
 
 async def open_terminal(command: str = "") -> dict:
-    """Open Terminal.app and optionally run a command. Marks it blue for JARVIS. Windows stub."""
-    # Windows stub - AppleScript disabled
+    """Open a terminal window and optionally run a command (PowerShell on Windows, Terminal.app on macOS)."""
     if IS_WINDOWS:
-        log.warning("Terminal automation not available on Windows")
-        return {
-            "success": False,
-            "confirmation": "Terminal automation is not available on Windows, sir."
-        }
+        if command:
+            escaped = command.replace("'", "''")
+            ps_command = f"Start-Process powershell.exe -ArgumentList '-NoExit','-Command','{escaped}'"
+        else:
+            ps_command = "Start-Process powershell.exe"
+        result = await execute_terminal_command(ps_command)
+        confirmation = "Opened PowerShell for you, sir." if result["success"] else result["confirmation"]
+        return {"success": result["success"], "confirmation": confirmation}
 
     if command:
         escaped = command.replace('"', '\\"')
@@ -184,16 +207,23 @@ async def open_claude_in_project(project_dir: str, prompt: str) -> dict:
     then launches claude in interactive mode with --dangerously-skip-permissions.
     No prompt escaping needed — CLAUDE.md handles context delivery.
     """
-    # Windows stub - AppleScript disabled
-    if IS_WINDOWS:
-        log.warning("Terminal automation not available on Windows")
-        return {
-            "success": False,
-            "confirmation": "Terminal automation is not available on Windows, sir. You can run Claude Code manually."
-        }
     # Write prompt to CLAUDE.md — claude reads this automatically
     claude_md = Path(project_dir) / "CLAUDE.md"
     claude_md.write_text(f"# Task\n\n{prompt}\n\nBuild this completely. If web app, make index.html work standalone.\n")
+
+    if IS_WINDOWS:
+        escaped_path = str(Path(project_dir)).replace('"', '\\"')
+        ps_launch = (
+            f"Start-Process powershell.exe -ArgumentList '-NoExit','-Command','cd \"{escaped_path}\"; "
+            "claude --dangerously-skip-permissions'"
+        )
+        result = await execute_terminal_command(ps_launch)
+        confirmation = (
+            "Claude Code is running in PowerShell, sir."
+            if result["success"]
+            else result["confirmation"]
+        )
+        return {"success": result["success"], "confirmation": confirmation}
 
     # Launch claude interactive — it reads CLAUDE.md on its own
     script = (
@@ -227,12 +257,11 @@ async def prompt_existing_terminal(project_name: str, prompt: str) -> dict:
     Uses System Events keystroke to type into an active Claude Code session
     rather than `do script` which would open a new shell.
     """
-    # Windows stub - AppleScript disabled
     if IS_WINDOWS:
-        log.warning("Terminal automation not available on Windows")
+        log.warning("Terminal window targeting not available on Windows")
         return {
             "success": False,
-            "confirmation": "Terminal automation is not available on Windows, sir."
+            "confirmation": "I can't target an existing terminal window on Windows, sir. I can run the command directly instead."
         }
 
     escaped_name = project_name.replace('"', '\\"')
@@ -411,6 +440,10 @@ async def execute_action(intent: dict, projects: list = None) -> dict:
         os.makedirs(project_dir, exist_ok=True)
         result = await open_claude_in_project(project_dir, target)
         result["project_dir"] = project_dir
+        return result
+    elif action == "run_command":
+        result = await execute_terminal_command(target)
+        result["project_dir"] = None
         return result
 
     else:

@@ -6,6 +6,7 @@ filter dates in Python. Results cached and refreshed in background.
 
 WINDOWS COMPATIBILITY: On Windows, all calendar functions return empty results.
 macOS-specific AppleScript functionality is disabled.
+Terminal automation now uses PowerShell on Windows; calendar remains read-only stub.
 """
 
 import asyncio

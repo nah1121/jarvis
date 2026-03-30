@@ -6,7 +6,7 @@ Successfully adapted the JARVIS voice AI assistant for Windows 11 with the follo
 
 1. **Local LLM Integration** - Replaced Anthropic cloud API with free-claude-code proxy
 2. **Local TTS Integration** - Replaced Fish Audio cloud API with Fish Speech local server
-3. **Windows Compatibility** - Stubbed out all macOS-specific AppleScript functionality
+3. **Windows Compatibility** - PowerShell-based terminal automation on Windows plus stubbed calendar/mail/notes AppleScript features
 4. **Comprehensive Documentation** - Created detailed setup guide and launch script
 
 ---
@@ -115,23 +115,10 @@ if IS_WINDOWS:
 
 ### 6. `actions.py`
 **Changes:**
-- Added `import sys` for platform detection
-- Added `IS_WINDOWS` and `IS_MACOS` flags
-- Added Windows detection log message
-- Stubbed Terminal automation functions:
-  - `_mark_terminal_as_jarvis()` - No-op on Windows
-  - `open_terminal()` - Returns failure with helpful message
-  - `open_claude_in_project()` - Returns failure, suggests manual run
-  - `prompt_existing_terminal()` - Returns failure
-
-**Return Pattern:**
-```python
-if IS_WINDOWS:
-    return {
-        "success": False,
-        "confirmation": "Terminal automation is not available on Windows, sir."
-    }
-```
+- Switched to `platform.system()` detection and enabled PowerShell automation on Windows
+- Added `execute_terminal_command()` wrapper that routes to PowerShell (Windows) or bash (macOS) with timeout and logging
+- `open_terminal()` and `open_claude_in_project()` now launch PowerShell windows on Windows instead of stubbing
+- `prompt_existing_terminal()` remains macOS-only, but Windows message clarifies command execution is available
 
 ### 7. `README.md`
 **Changes:**
@@ -182,6 +169,11 @@ if IS_WINDOWS:
    - Browser access
 
 6. **PowerShell Launch Script Usage**
+
+### 2. `powershell_access.py`
+- Cross-platform terminal executor
+- Uses PowerShell on Windows with execution-policy awareness, timeout, and command logging
+- Falls back to bash on macOS/Linux for future compatibility
 
 #### Technical Details Section:
 - Anthropic client configuration code examples
@@ -457,12 +449,13 @@ No changes required. Continue using existing setup with cloud APIs.
 3. `calendar_access.py` - Windows stubs
 4. `mail_access.py` - Windows stubs
 5. `notes_access.py` - Windows stubs
-6. `actions.py` - Windows stubs
+6. `actions.py` - PowerShell terminal automation on Windows
 7. `README.md` - Windows documentation
 
 ### Files Created:
 1. `SETUP_WINDOWS.md` - Complete setup guide (667 lines)
 2. `start-jarvis.ps1` - Launch script (219 lines)
+3. `powershell_access.py` - Cross-platform terminal executor
 
 ### Total Implementation Time:
 Approximately 2-3 hours of development time to:
@@ -495,7 +488,7 @@ Your existing setup continues to work without any changes.
 - Test on different Windows configurations
 - Suggest improvements to documentation
 - Help add Outlook integration
-- Help add Windows Terminal automation
+- Test and harden PowerShell automation in enterprise-restricted environments
 
 ---
 

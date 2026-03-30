@@ -45,6 +45,18 @@ winget install Git.Git
 pip install uv
 ```
 
+#### 1.4 Enable PowerShell automation (RemoteSigned)
+JARVIS runs terminal commands through PowerShell. Allow locally created scripts while keeping downloaded scripts restricted:
+```powershell
+# Run in an elevated PowerShell window once
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force
+```
+- RemoteSigned allows local scripts to run without prompting but still blocks unsigned remote scripts.
+- Avoid `Unrestricted`. Only use `-ExecutionPolicy Bypass` per-session if your organization policies require it:
+```powershell
+powershell.exe -ExecutionPolicy Bypass -File start-jarvis.ps1
+```
+
 ### Step 2: Set Up free-claude-code Proxy
 
 The free-claude-code proxy lets you use local LLMs (LM Studio, NVIDIA NIM, etc.) with the Anthropic SDK.
@@ -225,6 +237,11 @@ TTS_BASE_URL=http://localhost:8080
 TTS_VOICE_ID=male_en
 # Or use a custom reference audio file:
 # TTS_REFERENCE_AUDIO=C:\fish-speech\references\jarvis.wav
+
+# Terminal automation (PowerShell)
+POWERSHELL_ENABLED=true
+POWERSHELL_EXECUTION_POLICY=RemoteSigned
+TERMINAL_TIMEOUT=30
 
 # Optional: Your name
 USER_NAME=Tony

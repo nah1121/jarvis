@@ -39,7 +39,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from actions import execute_action, monitor_build, open_terminal, open_browser, open_claude_in_project, _generate_project_name, prompt_existing_terminal
+from actions import (
+    _generate_project_name,
+    execute_action,
+    execute_terminal_command,
+    monitor_build,
+    open_browser,
+    open_claude_in_project,
+    open_terminal,
+    prompt_existing_terminal,
+)
 from work_mode import WorkSession, is_casual_question
 from screen import get_active_windows, take_screenshot, describe_screen, format_windows_for_context
 from calendar_access import get_todays_events, get_upcoming_events, get_next_event, format_events_for_context, format_schedule_summary, refresh_cache as refresh_calendar_cache
@@ -107,7 +116,8 @@ SELF-AWARENESS:
 You ARE the JARVIS project at {project_dir} on {user_name}'s computer. Your code is Python (FastAPI server, WebSocket voice, Fish Audio TTS, Anthropic API). You were built by {user_name}. If asked about yourself, your code, how you work, or your line count — use [ACTION:PROMPT_PROJECT] to check the jarvis project. You have full access to your own source code.
 
 YOUR CAPABILITIES (these are REAL and ACTIVE — you CAN do all of these RIGHT NOW):
-- You CAN open Terminal.app via AppleScript
+- You CAN open Terminal/PowerShell (AppleScript on macOS, PowerShell on Windows)
+- You CAN run terminal commands safely via [ACTION:TERMINAL] (PowerShell on Windows, bash on macOS)
 - You CAN open Google Chrome and browse any URL or search query
 - You CAN spawn Claude Code in a Terminal window for coding tasks
 - You CAN create project folders on the Desktop
@@ -195,6 +205,7 @@ When you decide the user needs something DONE (not just discussed), include an a
 - [ACTION:BROWSE] url or search query — when user wants to see a webpage or search result in Chrome
 - [ACTION:RESEARCH] detailed research brief — when user wants real research with real data. Claude Code will browse the web, find real listings/data, and create a report document. Give it a detailed brief of what to find.
 - [ACTION:OPEN_TERMINAL] — when user just wants a fresh Claude Code terminal with no specific project
+- [ACTION:TERMINAL] exact command — when the user wants a PowerShell (Windows) or bash (macOS) command executed. Keep commands minimal and safe.
 - [ACTION:PROMPT_PROJECT] project_name ||| prompt — THIS IS YOUR MOST POWERFUL ACTION. Use it whenever the user wants to work on, jump into, resume, check on, or interact with ANY existing project. You connect directly to Claude Code in that project and can read its response. Craft a clear prompt based on what the user wants. Examples:
   "jump into client engine" → [ACTION:PROMPT_PROJECT] The Client Engine ||| What is the current state of this project? Summarize what was being worked on most recently.
   "check for improvements on my-app" → [ACTION:PROMPT_PROJECT] my-app ||| Review the project and identify improvements we should make.
@@ -209,6 +220,8 @@ When you decide the user needs something DONE (not just discussed), include an a
 - [ACTION:CREATE_NOTE] title ||| body — create a new Apple Note. For saving plans, ideas, lists.
   "save that as a note" → [ACTION:CREATE_NOTE] Day Plan March 19 ||| Morning: client calls. Afternoon: TikTok dashboard. Evening: JARVIS improvements.
 - [ACTION:READ_NOTE] title search — read an existing Apple Note by title keyword.
+
+Keep terminal commands short and non-destructive. Do not suggest shutdown/format/delete commands unless the user explicitly confirms.
 
 You use Claude Code as your tool to build, research, and write code — but YOU are the one doing the work. Never say "Claude Code did X" or "Claude Code is asking" — say "I built X", "I'm checking on that", "I found X". You ARE the intelligence. Claude Code is just your hands.
 
@@ -627,6 +640,10 @@ STT_CORRECTIONS = {
     r"\bjarves\b": "JARVIS",
 }
 
+ACTION_KEYWORDS = {
+    "browse": ["browse", "search", "search for", "google", "look up", "open url", "visit"],
+}
+
 
 def apply_speech_corrections(text: str) -> str:
     """Fix common speech-to-text errors before processing."""
@@ -743,7 +760,7 @@ def extract_action(response: str) -> tuple[str, dict | None]:
     Returns (clean_text_for_tts, action_dict_or_none).
     """
     match = _action_re.search(
-        r'\[ACTION:(BUILD|BROWSE|RESEARCH|OPEN_TERMINAL|PROMPT_PROJECT|ADD_TASK|ADD_NOTE|COMPLETE_TASK|REMEMBER|CREATE_NOTE|READ_NOTE)\]\s*(.*?)$',
+        r'\[ACTION:(BUILD|BROWSE|RESEARCH|OPEN_TERMINAL|TERMINAL|PROMPT_PROJECT|ADD_TASK|ADD_NOTE|COMPLETE_TASK|REMEMBER|CREATE_NOTE|READ_NOTE)\]\s*(.*?)$',
         response, _action_re.DOTALL,
     )
     if match:
@@ -1502,6 +1519,14 @@ def detect_action_fast(text: str) -> dict | None:
     if any(w in t for w in ["open claude", "start claude", "launch claude", "run claude"]):
         return {"action": "open_terminal"}
 
+    # Direct terminal command (short, explicit)
+    if t.startswith("run "):
+        return {"action": "terminal_command", "target": t.replace("run", "", 1).strip()}
+    if t.startswith("execute "):
+        return {"action": "terminal_command", "target": t.replace("execute", "", 1).strip()}
+    if t.startswith("powershell "):
+        return {"action": "terminal_command", "target": t.replace("powershell", "", 1).strip()}
+
     # Show recent build
     if any(w in t for w in ["show me what you built", "pull up what you made", "open what you built"]):
         return {"action": "show_recent"}
@@ -1552,6 +1577,11 @@ def detect_action_fast(text: str) -> dict | None:
 
 async def handle_open_terminal() -> str:
     result = await open_terminal("claude --dangerously-skip-permissions")
+    return result["confirmation"]
+
+
+async def handle_terminal_command(command: str) -> str:
+    result = await execute_terminal_command(command)
     return result["confirmation"]
 
 
@@ -2089,6 +2119,8 @@ async def voice_handler(ws: WebSocket):
                     if action:
                         if action["action"] == "open_terminal":
                             response_text = await handle_open_terminal()
+                        elif action["action"] == "terminal_command":
+                            response_text = await handle_terminal_command(action.get("target", ""))
                         elif action["action"] == "show_recent":
                             response_text = await handle_show_recent()
                         elif action["action"] == "describe_screen":
@@ -2191,6 +2223,10 @@ async def voice_handler(ws: WebSocket):
                                     )
                                 elif embedded_action["action"] == "open_terminal":
                                     asyncio.create_task(_execute_open_terminal())
+                                elif embedded_action["action"] == "terminal":
+                                    result = await execute_terminal_command(embedded_action["target"])
+                                    summary = result.get("confirmation", "")
+                                    response_text = (response_text + " " + summary).strip() if response_text else summary
                                 elif embedded_action["action"] == "prompt_project":
                                     target = embedded_action["target"]
                                     if "|||" in target:
@@ -2355,7 +2391,22 @@ class PreferencesUpdate(BaseModel):
 
 @app.post("/api/settings/keys")
 async def api_settings_keys(body: KeyUpdate):
-    allowed = {"ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL", "FISH_API_KEY", "FISH_VOICE_ID", "TTS_BASE_URL", "TTS_VOICE_ID", "TTS_REFERENCE_AUDIO", "USER_NAME", "HONORIFIC", "CALENDAR_ACCOUNTS"}
+    allowed = {
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_BASE_URL",
+        "FISH_API_KEY",
+        "FISH_VOICE_ID",
+        "TTS_BASE_URL",
+        "TTS_VOICE_ID",
+        "TTS_REFERENCE_AUDIO",
+        "USER_NAME",
+        "HONORIFIC",
+        "CALENDAR_ACCOUNTS",
+        "POWERSHELL_ENABLED",
+        "POWERSHELL_EXECUTION_POLICY",
+        "TERMINAL_TIMEOUT",
+        "TERMINAL_LOG_PATH",
+    }
     if body.key_name not in allowed:
         return JSONResponse({"success": False, "error": "Invalid key name"}, status_code=400)
     _write_env_key(body.key_name, body.key_value)
@@ -2428,6 +2479,10 @@ async def api_settings_status():
             "tts_base_url": env_dict.get("TTS_BASE_URL", ""),
             "tts_voice_id": env_dict.get("TTS_VOICE_ID", ""),
             "user_name": env_dict.get("USER_NAME", ""),
+            "powershell_enabled": env_dict.get("POWERSHELL_ENABLED", ""),
+            "powershell_execution_policy": env_dict.get("POWERSHELL_EXECUTION_POLICY", ""),
+            "terminal_timeout": env_dict.get("TERMINAL_TIMEOUT", ""),
+            "terminal_log_path": env_dict.get("TERMINAL_LOG_PATH", ""),
         },
     }
 

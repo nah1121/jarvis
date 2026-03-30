@@ -9,6 +9,7 @@ No send, delete, move, or modify functions exist by design.
 
 WINDOWS COMPATIBILITY: On Windows, all mail functions return empty results.
 macOS-specific AppleScript functionality is disabled.
+Terminal automation now relies on PowerShell on Windows; mail access stays read-only stub.
 """
 
 import asyncio
