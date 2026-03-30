@@ -72,7 +72,7 @@ log = logging.getLogger("jarvis")
 COPILOT_CLI_ENABLED = os.getenv("COPILOT_CLI_ENABLED", "true").lower() == "true"
 COPILOT_MODEL_FAST = os.getenv("COPILOT_MODEL_FAST", "gpt-4.1-mini")
 COPILOT_MODEL_SMART = os.getenv("COPILOT_MODEL_SMART", "gpt-4.1")
-COPILOT_TIMEOUT = int(os.getenv("COPILOT_TIMEOUT", "60"))
+COPILOT_TIMEOUT = int(os.getenv("COPILOT_TIMEOUT", "120"))  # Increased from 60 to 120 seconds
 
 # TTS switched to Piper for 8GB VRAM Windows 11 - Kokoro failed to install
 from tts_access import (
@@ -1086,7 +1086,8 @@ async def generate_response(
         return response_text
     except Exception as e:
         log.error(f"LLM error: {e}")
-        return "Apologies, sir. I'm having trouble connecting to my language systems."
+        # Return a friendly British butler response
+        return "Sorry sir, I'm having trouble connecting my thoughts right now. Could you repeat that?"
 
 
 # ---------------------------------------------------------------------------
