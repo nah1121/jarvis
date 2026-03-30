@@ -114,14 +114,25 @@ class CopilotRunner:
             log.error(f"Copilot CLI timed out after {wait_timeout}s")
             raise CopilotError(f"Copilot CLI timed out after {wait_timeout}s")
 
+        # Log raw output for debugging (stored in memory, not written to files)
+        log.debug(f"Copilot CLI raw stdout bytes length: {len(stdout)} bytes")
+        log.debug(f"Copilot CLI raw stderr bytes length: {len(stderr)} bytes")
+
+        # Decode stdout and stderr while preserving raw bytes in memory
+        stdout_text = stdout.decode(errors="ignore").strip()
+        stderr_text = stderr.decode(errors="ignore").strip()
+
+        # Log decoded output lengths
+        log.debug(f"Copilot CLI decoded stdout length: {len(stdout_text)} chars")
+        log.debug(f"Copilot CLI decoded stderr length: {len(stderr_text)} chars")
+
         if process.returncode != 0:
-            error_text = stderr.decode(errors="ignore").strip()
             # Log full stderr for debugging
             log.error(f"Copilot CLI failed (exit code {process.returncode})")
-            log.error(f"stderr: {error_text}")
+            log.error(f"stderr: {stderr_text}")
 
             # Check for common errors and provide helpful guidance
-            if "--no-warnings" in error_text or "unknown option" in error_text.lower():
+            if "--no-warnings" in stderr_text or "unknown option" in stderr_text.lower():
                 log.error(
                     "Copilot CLI reported an unknown option error. "
                     "This may indicate:\n"
@@ -131,11 +142,18 @@ class CopilotRunner:
                     f"  Command being executed: {cmd_preview}"
                 )
 
-            raise CopilotError(error_text or "Copilot CLI returned a non-zero exit code.")
+            raise CopilotError(stderr_text or "Copilot CLI returned a non-zero exit code.")
 
-        result = stdout.decode(errors="ignore").strip()
-        log.debug(f"Copilot CLI response length: {len(result)} chars")
-        return result
+        # If stdout is empty but stderr has content, log warning but don't fail
+        if not stdout_text and stderr_text:
+            log.warning(f"Copilot CLI returned empty stdout but has stderr: {stderr_text[:200]}")
+
+        # If both are empty, log a warning
+        if not stdout_text and not stderr_text:
+            log.warning("Copilot CLI returned empty stdout and stderr (returncode=0)")
+
+        log.debug(f"Copilot CLI response length: {len(stdout_text)} chars")
+        return stdout_text
 
     async def chat_fast(self, system: str, messages: List[Dict[str, str]], **kwargs) -> str:
         return await self.chat(system, messages, use_smart=False, **kwargs)
