@@ -1497,7 +1497,7 @@ async def handle_build(target: str) -> str:
     script = (
         'tell application "Terminal"\n'
         "    activate\n"
-        f'    do script "cd {path} && copilot -p \\\"$(cat .jarvis_prompt.txt)\\\""\n'
+        f'    do script "cd {path} && copilot -p \\\"$(cat .jarvis_prompt.txt)\\\" -s"\n'
         "end tell"
     )
     await asyncio.create_subprocess_exec(
@@ -2422,7 +2422,7 @@ async def api_fix_self():
     script = (
         'tell application "Terminal"\n'
         '    activate\n'
-        f'    do script "cd {jarvis_dir} && copilot"\n'
+        f'    do script "cd {jarvis_dir} && copilot -s"\n'
         'end tell'
     )
     await asyncio.create_subprocess_exec(

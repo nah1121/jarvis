@@ -2,7 +2,7 @@
 Copilot CLI access layer.
 
 Replaces direct Anthropic/Claude API usage with the GitHub Copilot CLI.
-All LLM calls go through `copilot -p ...` (non-interactive mode) using subprocess.
+All LLM calls go through `copilot -p ... -s` (non-interactive mode) using subprocess.
 """
 
 import asyncio
@@ -68,9 +68,10 @@ class CopilotRunner:
         cwd: str | None = None,
         timeout: int | None = None,
     ) -> str:
-        """Call `copilot -p ...` and return the text response.
+        """Call `copilot -p ... -s` and return the text response.
 
-        Uses -p (--prompt) flag to provide prompt programmatically in non-interactive mode.
+        Uses -p (--prompt) flag to provide prompt programmatically in non-interactive mode
+        with -s flag for strict formatting.
         """
         if not self.available:
             raise CopilotError("Copilot CLI not available or disabled.")
@@ -78,17 +79,17 @@ class CopilotRunner:
         prompt = _format_prompt(system, messages)
         model = self.smart_model if use_smart else self.fast_model
 
-        # Use -p for prompt (non-interactive mode)
-        cmd = ["copilot", "-p", prompt]
+        # Use -p for prompt (non-interactive mode) with -s flag
+        cmd = ["copilot", "-p", prompt, "-s"]
         if model:
             cmd.extend(["--model", model])
 
         # Log the exact command for debugging (excluding full prompt for brevity)
-        log.debug(f"Executing Copilot CLI: copilot -p <prompt> {f'--model {model}' if model else ''}")
+        log.debug(f"Executing Copilot CLI: copilot -p <prompt> -s {f'--model {model}' if model else ''}")
         log.debug(f"Working directory: {cwd or 'current'}")
 
         # Log the full command list structure for debugging unknown option errors
-        cmd_preview = [cmd[0], cmd[1], f"<{len(prompt)} chars>"] + cmd[3:]
+        cmd_preview = [cmd[0], cmd[1], f"<{len(prompt)} chars>", cmd[3]] + cmd[4:]
         log.debug(f"Full command structure: {cmd_preview}")
 
         try:
