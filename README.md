@@ -23,9 +23,9 @@ JARVIS connects to your Apple Calendar, Mail, and Notes (macOS only). It can bro
 
 ### Windows 11 Setup
 
-The Windows version uses **GitHub Copilot CLI** plus lightweight TTS:
-- **Kokoro** local TTS (82M params, runs on CPU or small GPU)
-- **Edge-TTS** (Microsoft neural voices) as the default online fallback
+The Windows version uses **GitHub Copilot CLI** plus lightweight, fully offline TTS:
+- **Piper TTS** (neural-quality, CPU-friendly, ~25MB models) - Primary engine
+- **pyttsx3** (Windows SAPI5 native voices) - Automatic fallback
 
 **See [SETUP_WINDOWS.md](SETUP_WINDOWS.md) for complete Windows setup guide.**
 
