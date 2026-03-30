@@ -1,4 +1,4 @@
-# JARVIS — Windows 11 Setup Guide (Kokoro + Edge-TTS) 
+# JARVIS — Windows 11 Setup Guide (Kokoro + Edge-TTS)
 
 This guide targets Windows 11 with ~8GB VRAM (or CPU-only). The default TTS uses Edge neural voices, with optional local **Kokoro** for offline, low-latency speech.
 
