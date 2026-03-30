@@ -1496,7 +1496,7 @@ async def handle_build(target: str) -> str:
     script = (
         'tell application "Terminal"\n'
         "    activate\n"
-        f'    do script "cd {path} && copilot chat --message \\\"$(cat .jarvis_prompt.txt)\\\""\n'
+        f'    do script "cd {path} && copilot -p \\\"$(cat .jarvis_prompt.txt)\\\""\n'
         "end tell"
     )
     await asyncio.create_subprocess_exec(
