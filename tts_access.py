@@ -115,7 +115,7 @@ async def synthesize(
     Args:
         text: Text to convert to speech
         preferred_engine: "piper" or "pyttsx3" (default from env)
-        voice: Optional voice override
+        voice: Currently unused; reserved for future per-call voice selection.
 
     Returns:
         Tuple of (audio_bytes, engine_name) or (None, engine_name) on failure
