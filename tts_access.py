@@ -237,6 +237,11 @@ async def _ensure_piper_voice():
 
 async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
     """Generate speech using Piper TTS (local, neural-quality, CPU-friendly)."""
+    # Validate input text
+    if not text or not text.strip():
+        log.warning("Piper synthesis called with empty text")
+        return None
+
     try:
         voice_obj = await _ensure_piper_voice()
     except Exception as e:
@@ -254,7 +259,14 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
             audio_stream = io.BytesIO()
             voice_obj.synthesize(text, audio_stream)
             audio_stream.seek(0)
-            return audio_stream.read()
+            audio_bytes = audio_stream.read()
+
+            # Validate that audio was actually generated
+            if not audio_bytes or len(audio_bytes) == 0:
+                log.warning("Piper synthesis produced empty audio")
+                return None
+
+            return audio_bytes
         except Exception as e:
             log.warning(f"Piper synthesis error: {e}")
             return None
@@ -315,6 +327,11 @@ async def _ensure_pyttsx3_engine():
 
 async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes]:
     """Generate speech using pyttsx3 (Windows SAPI5 fallback)."""
+    # Validate input text
+    if not text or not text.strip():
+        log.warning("pyttsx3 synthesis called with empty text")
+        return None
+
     try:
         engine = await _ensure_pyttsx3_engine()
     except Exception as e:
@@ -344,6 +361,11 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
                 os.unlink(tmp_path)
             except OSError as e:
                 log.debug("Failed to delete temporary WAV file %s: %s", tmp_path, e)
+
+            # Validate that audio was actually generated
+            if not audio_bytes or len(audio_bytes) == 0:
+                log.warning("pyttsx3 synthesis produced empty audio")
+                return None
 
             return audio_bytes
         except Exception as e:
