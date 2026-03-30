@@ -6,6 +6,7 @@ All LLM calls go through `copilot -p ...` (non-interactive mode) using subproces
 """
 
 import asyncio
+import glob
 import logging
 import os
 import shutil
@@ -21,10 +22,27 @@ class CopilotError(Exception):
 
 def _find_copilot_command() -> Optional[str]:
     """Locate the Copilot CLI binary on the system."""
-    for name in ("copilot", "copilot.cmd"):
+    # Try standard PATH lookup first (works for npm global install and WinGet Links)
+    for name in ("copilot", "copilot.cmd", "copilot.exe"):
         path = shutil.which(name)
         if path:
             return path
+
+    # On Windows, check WinGet Packages folder as fallback
+    if os.name == 'nt':
+        userprofile = os.environ.get('USERPROFILE', '')
+        if userprofile:
+            # WinGet installs to %LOCALAPPDATA%\Microsoft\WinGet\Packages\GitHub.Copilot_*
+            winget_pattern = os.path.join(
+                userprofile,
+                'AppData', 'Local', 'Microsoft', 'WinGet', 'Packages',
+                'GitHub.Copilot_*', 'copilot.exe'
+            )
+            matches = glob.glob(winget_pattern)
+            if matches:
+                # Return the first match (usually only one)
+                return matches[0]
+
     return None
 
 
@@ -55,7 +73,9 @@ class CopilotRunner:
     def __post_init__(self):
         self.command = _find_copilot_command()
         if not self.command:
-            log.warning("Copilot CLI not found on PATH (copilot/copilot.cmd).")
+            log.warning("Copilot CLI not found on PATH or in WinGet Packages folder.")
+        else:
+            log.info(f"Copilot CLI found at: {self.command}")
 
     @property
     def available(self) -> bool:
