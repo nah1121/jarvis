@@ -70,11 +70,9 @@ class CopilotRunner:
         cwd: str | None = None,
         timeout: int | None = None,
     ) -> str:
-        """Call `copilot -sp ...` and return the text response.
+        """Call `copilot -p ...` and return the text response.
 
-        Uses -sp flags:
-        - -s (--silent): Clean output, no extra stats/logs
-        - -p (--prompt): Provide prompt programmatically (non-interactive mode)
+        Uses -p (--prompt) flag to provide prompt programmatically in non-interactive mode.
         """
         if not self.available:
             raise CopilotError("Copilot CLI not available or disabled.")
@@ -82,13 +80,13 @@ class CopilotRunner:
         prompt = _format_prompt(system, messages)
         model = self.smart_model if use_smart else self.fast_model
 
-        # Use -sp for silent + prompt (non-interactive clean output)
-        cmd = [self.command, "-sp", prompt]
+        # Use -p for prompt (non-interactive mode)
+        cmd = [self.command, "-p", prompt]
         if model:
             cmd.extend(["--model", model])
 
         # Log the exact command for debugging (excluding full prompt for brevity)
-        log.debug(f"Executing Copilot CLI: {self.command} -sp <prompt> {f'--model {model}' if model else ''}")
+        log.debug(f"Executing Copilot CLI: {self.command} -p <prompt> {f'--model {model}' if model else ''}")
         log.debug(f"Working directory: {cwd or 'current'}")
 
         try:
