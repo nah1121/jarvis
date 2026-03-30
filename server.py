@@ -74,17 +74,13 @@ COPILOT_MODEL_FAST = os.getenv("COPILOT_MODEL_FAST", "gpt-4.1-mini")
 COPILOT_MODEL_SMART = os.getenv("COPILOT_MODEL_SMART", "gpt-4.1")
 COPILOT_TIMEOUT = int(os.getenv("COPILOT_TIMEOUT", "60"))
 
-# TTS changed for 8GB VRAM Windows 11 - using Kokoro or Edge-TTS instead of Fish Speech
+# TTS switched to Piper for 8GB VRAM Windows 11 - Kokoro failed to install
 from tts_access import (
     DEFAULT_ENGINE as TTS_ENGINE,
-    EDGE_VOICE as TTS_EDGE_VOICE,
-    KOKORO_DEVICE as TTS_KOKORO_DEVICE,
-    KOKORO_LANG as TTS_KOKORO_LANG,
-    KOKORO_SPEED as TTS_KOKORO_SPEED,
-    KOKORO_VOICE as TTS_KOKORO_VOICE,
+    PIPER_VOICE,
     synthesize as tts_synthesize,
 )
-TTS_VOICE = os.getenv("TTS_VOICE", TTS_EDGE_VOICE)
+TTS_VOICE = os.getenv("TTS_VOICE", PIPER_VOICE)
 
 USER_NAME = os.getenv("USER_NAME", "sir")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -1020,7 +1016,7 @@ _last_greeting_time: float = 0
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Kokoro (local) or Edge-TTS (cloud)."""
+    """Generate speech audio from text using Piper (local) or pyttsx3 (fallback)."""
 
     audio, engine = await tts_synthesize(text)
     if audio:
@@ -1028,7 +1024,7 @@ async def synthesize_speech(text: str) -> Optional[bytes]:
         _append_usage_entry(0, 0, "tts")
         log.debug(f"TTS generated using {engine}: {len(audio)} bytes")
     else:
-        log.warning("TTS unavailable (Kokoro/Edge-TTS both failed)")
+        log.warning("TTS unavailable (Piper/pyttsx3 both failed)")
     return audio
 
 
