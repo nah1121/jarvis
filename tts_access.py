@@ -5,6 +5,7 @@ import os
 import tempfile
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -25,6 +26,14 @@ _piper_voice = None
 _piper_lock = asyncio.Lock()
 _pyttsx3_engine = None
 _pyttsx3_lock = asyncio.Lock()
+
+# Dedicated single-thread executors to guarantee thread affinity:
+#   Piper  – prevents concurrent onnxruntime synthesis calls on the shared voice object.
+#   pyttsx3 – keeps Windows SAPI5 COM objects on the thread that created them; a pool
+#             with more than one worker would allow concurrent calls to COM, which is
+#             unsafe on Windows.
+_piper_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="piper-tts")
+_pyttsx3_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyttsx3-tts")
 
 # HuggingFace base URL for official Piper voice models
 _PIPER_HF_BASE = (
@@ -218,7 +227,7 @@ async def _ensure_piper_voice():
                 return None
 
         try:
-            _piper_voice = await loop.run_in_executor(None, _load_voice)
+            _piper_voice = await loop.run_in_executor(_piper_executor, _load_voice)
         except Exception as e:
             log.warning(f"Piper voice initialization failed: {e}")
             _piper_voice = None
@@ -251,7 +260,7 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
             return None
 
     try:
-        return await loop.run_in_executor(None, _render)
+        return await loop.run_in_executor(_piper_executor, _render)
     except Exception as e:
         log.warning(f"Piper execution error: {e}")
         return None
@@ -296,7 +305,7 @@ async def _ensure_pyttsx3_engine():
                 return None
 
         try:
-            _pyttsx3_engine = await loop.run_in_executor(None, _init_engine)
+            _pyttsx3_engine = await loop.run_in_executor(_pyttsx3_executor, _init_engine)
         except Exception as e:
             log.warning(f"pyttsx3 engine setup error: {e}")
             _pyttsx3_engine = None
@@ -342,7 +351,7 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
             return None
 
     try:
-        return await loop.run_in_executor(None, _render)
+        return await loop.run_in_executor(_pyttsx3_executor, _render)
     except Exception as e:
         log.warning(f"pyttsx3 execution error: {e}")
         return None
