@@ -7,7 +7,7 @@ JARVIS (Just A Rather Very Intelligent System) is a voice-first AI assistant for
 When a user clones this repo and uses GitHub Copilot CLI, help them:
 1. Copy .env.example to .env
 2. Install GitHub Copilot CLI: npm install -g @github/copilot
-3. (Optional) Get a Fish Audio API key from fish.audio for cloud TTS
+3. (Optional) Install Kokoro for local TTS (`pip install kokoro numpy`) or keep default Edge-TTS
 4. Install Python dependencies: pip install -r requirements.txt
 5. Install frontend dependencies: cd frontend && npm install
 6. Generate SSL certs: openssl req -x509 -newkey rsa:2048 -keyout key.pem -out cert.pem -days 365 -nodes -subj '/CN=localhost'
@@ -21,7 +21,7 @@ When a user clones this repo and uses GitHub Copilot CLI, help them:
 - **Frontend**: Vite + TypeScript + Three.js (audio-reactive orb)
 - **Communication**: WebSocket (JSON messages + binary audio)
 - **AI**: Copilot CLI (fast and smart models)
-- **TTS**: Fish Audio with JARVIS voice model
+- **TTS**: Kokoro (local) or Edge neural voices
 - **System**: AppleScript for Calendar, Mail, Notes, Terminal integration
 
 ## Key Files
@@ -41,8 +41,9 @@ When a user clones this repo and uses GitHub Copilot CLI, help them:
 - `COPILOT_CLI_ENABLED` — toggle Copilot CLI usage
 - `COPILOT_MODEL_FAST` / `COPILOT_MODEL_SMART` — model choices for fast vs deep responses
 - `COPILOT_TIMEOUT` — CLI call timeout in seconds
-- `FISH_API_KEY` (optional) — Fish Audio TTS
-- `FISH_VOICE_ID` (optional) — Voice model ID
+- `TTS_ENGINE` — `edge` (default) or `kokoro`
+- `TTS_VOICE` — Voice name (e.g., en-GB-RyanNeural or af_bella)
+- `TTS_KOKORO_VOICE` / `TTS_KOKORO_LANG` / `TTS_KOKORO_DEVICE` — optional Kokoro tuning
 - `USER_NAME` (optional) — Your name for JARVIS to use
 - `CALENDAR_ACCOUNTS` (optional) — Comma-separated calendar emails
 

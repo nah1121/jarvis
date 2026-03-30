@@ -74,15 +74,17 @@ COPILOT_MODEL_FAST = os.getenv("COPILOT_MODEL_FAST", "gpt-4.1-mini")
 COPILOT_MODEL_SMART = os.getenv("COPILOT_MODEL_SMART", "gpt-4.1")
 COPILOT_TIMEOUT = int(os.getenv("COPILOT_TIMEOUT", "60"))
 
-# Legacy Fish Audio cloud TTS (macOS)
-FISH_API_KEY = os.getenv("FISH_API_KEY", "")
-FISH_VOICE_ID = os.getenv("FISH_VOICE_ID", "612b878b113047d9a770c069c8b4fdfe")  # JARVIS (MCU)
-FISH_API_URL = "https://api.fish.audio/v1/tts"
-
-# Local Fish Speech TTS server (Windows)
-TTS_BASE_URL = os.getenv("TTS_BASE_URL", "")  # e.g., http://localhost:8080
-TTS_VOICE_ID = os.getenv("TTS_VOICE_ID", "male_en")
-TTS_REFERENCE_AUDIO = os.getenv("TTS_REFERENCE_AUDIO", "")  # Optional: path to reference audio
+# TTS changed for 8GB VRAM Windows 11 - using Kokoro or Edge-TTS instead of Fish Speech
+from tts_access import (
+    DEFAULT_ENGINE as TTS_ENGINE,
+    EDGE_VOICE as TTS_EDGE_VOICE,
+    KOKORO_DEVICE as TTS_KOKORO_DEVICE,
+    KOKORO_LANG as TTS_KOKORO_LANG,
+    KOKORO_SPEED as TTS_KOKORO_SPEED,
+    KOKORO_VOICE as TTS_KOKORO_VOICE,
+    synthesize as tts_synthesize,
+)
+TTS_VOICE = os.getenv("TTS_VOICE", TTS_EDGE_VOICE)
 
 USER_NAME = os.getenv("USER_NAME", "sir")
 PROJECT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -115,7 +117,7 @@ CONVERSATION STYLE:
 - When you don't know something: "I'm afraid I don't have that information, sir" not "I don't know"
 
 SELF-AWARENESS:
-You ARE the JARVIS project at {project_dir} on {user_name}'s computer. Your code is Python (FastAPI server, WebSocket voice, Fish Audio TTS, Copilot CLI subprocess calls). You were built by {user_name}. If asked about yourself, your code, how you work, or your line count — use [ACTION:PROMPT_PROJECT] to check the jarvis project. You have full access to your own source code.
+You ARE the JARVIS project at {project_dir} on {user_name}'s computer. Your code is Python (FastAPI server, WebSocket voice, Kokoro/Edge TTS, Copilot CLI subprocess calls). You were built by {user_name}. If asked about yourself, your code, how you work, or your line count — use [ACTION:PROMPT_PROJECT] to check the jarvis project. You have full access to your own source code.
 
 YOUR CAPABILITIES (these are REAL and ACTIVE — you CAN do all of these RIGHT NOW):
 - You CAN open Terminal/PowerShell (AppleScript on macOS, PowerShell on Windows)
@@ -1014,80 +1016,20 @@ _last_greeting_time: float = 0
 
 
 # ---------------------------------------------------------------------------
-# TTS (Fish Audio)
+# TTS (Kokoro local or Edge-TTS fallback)
 # ---------------------------------------------------------------------------
 
 async def synthesize_speech(text: str) -> Optional[bytes]:
-    """Generate speech audio from text using Fish Audio TTS (cloud) or Fish Speech (local)."""
+    """Generate speech audio from text using Kokoro (local) or Edge-TTS (cloud)."""
 
-    # Try local Fish Speech server first (Windows)
-    if TTS_BASE_URL:
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as http:
-                # Fish Speech API endpoint
-                url = f"{TTS_BASE_URL.rstrip('/')}/v1/tts"
-
-                # Build payload for Fish Speech
-                payload = {
-                    "text": text,
-                    "format": "mp3",
-                }
-
-                # Add voice configuration
-                if TTS_REFERENCE_AUDIO:
-                    # Use reference audio for voice cloning
-                    payload["reference_audio"] = TTS_REFERENCE_AUDIO
-                elif TTS_VOICE_ID:
-                    # Use voice ID
-                    payload["reference_id"] = TTS_VOICE_ID
-
-                response = await http.post(url, json=payload)
-
-                if response.status_code == 200:
-                    _session_tokens["tts_calls"] += 1
-                    _append_usage_entry(0, 0, "tts")
-                    log.debug(f"TTS generated using local Fish Speech: {len(response.content)} bytes")
-                    return response.content
-                else:
-                    log.warning(f"Local TTS server returned {response.status_code}: {response.text[:200]}")
-        except httpx.ConnectError:
-            log.warning(f"Local TTS server not reachable at {TTS_BASE_URL}")
-        except Exception as e:
-            log.warning(f"Local TTS error: {e}")
-
-    # Fall back to Fish Audio cloud API (macOS)
-    if FISH_API_KEY:
-        try:
-            async with httpx.AsyncClient(timeout=15.0) as http:
-                response = await http.post(
-                    FISH_API_URL,
-                    headers={
-                        "Authorization": f"Bearer {FISH_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={
-                        "text": text,
-                        "reference_id": FISH_VOICE_ID,
-                        "format": "mp3",
-                    },
-                )
-                if response.status_code == 200:
-                    _session_tokens["tts_calls"] += 1
-                    _append_usage_entry(0, 0, "tts")
-                    log.debug(f"TTS generated using Fish Audio cloud: {len(response.content)} bytes")
-                    return response.content
-                else:
-                    log.error(f"Fish Audio TTS error: {response.status_code}")
-                    return None
-        except Exception as e:
-            log.error(f"Fish Audio TTS error: {e}")
-            return None
-
-    # No TTS configured
-    if not TTS_BASE_URL and not FISH_API_KEY:
-        log.warning("No TTS configured (set TTS_BASE_URL or FISH_API_KEY)")
-
-    return None
+    audio, engine = await tts_synthesize(text)
+    if audio:
+        _session_tokens["tts_calls"] += 1
+        _append_usage_entry(0, 0, "tts")
+        log.debug(f"TTS generated using {engine}: {len(audio)} bytes")
+    else:
+        log.warning("TTS unavailable (Kokoro/Edge-TTS both failed)")
+    return audio
 
 
 # ---------------------------------------------------------------------------
@@ -2332,6 +2274,11 @@ class KeyUpdate(BaseModel):
 class KeyTest(BaseModel):
     key_value: str | None = None
 
+class TtsTest(BaseModel):
+    engine: str | None = None
+    voice: str | None = None
+    text: str | None = None
+
 class PreferencesUpdate(BaseModel):
     user_name: str = ""
     honorific: str = "sir"
@@ -2344,11 +2291,13 @@ async def api_settings_keys(body: KeyUpdate):
         "COPILOT_MODEL_FAST",
         "COPILOT_MODEL_SMART",
         "COPILOT_TIMEOUT",
-        "FISH_API_KEY",
-        "FISH_VOICE_ID",
-        "TTS_BASE_URL",
-        "TTS_VOICE_ID",
-        "TTS_REFERENCE_AUDIO",
+        "TTS_ENGINE",
+        "TTS_VOICE",
+        "TTS_EDGE_VOICE",
+        "TTS_KOKORO_VOICE",
+        "TTS_KOKORO_LANG",
+        "TTS_KOKORO_DEVICE",
+        "TTS_KOKORO_SPEED",
         "USER_NAME",
         "HONORIFIC",
         "CALENDAR_ACCOUNTS",
@@ -2359,7 +2308,10 @@ async def api_settings_keys(body: KeyUpdate):
     }
     if body.key_name not in allowed:
         return JSONResponse({"success": False, "error": "Invalid key name"}, status_code=400)
-    _write_env_key(body.key_name, body.key_value)
+    value = body.key_value
+    if body.key_name == "TTS_ENGINE":
+        value = (value or "").lower()
+    _write_env_key(body.key_name, value)
     return {"success": True}
 
 @app.post("/api/settings/test-copilot")
@@ -2379,24 +2331,14 @@ async def api_test_copilot(_: KeyTest):
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 
-@app.post("/api/settings/test-fish")
-async def api_test_fish(body: KeyTest):
-    key = body.key_value or os.getenv("FISH_API_KEY", "")
-    if not key:
-        return {"valid": False, "error": "No key provided"}
+@app.post("/api/settings/test-tts")
+async def api_test_tts(body: TtsTest):
+    engine = (body.engine or TTS_ENGINE or "edge").lower()
+    voice = body.voice or TTS_VOICE
+    text = body.text or "Testing audio, sir."
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.post(
-                "https://api.fish.audio/v1/tts",
-                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
-                json={"text": "test", "reference_id": FISH_VOICE_ID},
-            )
-            if resp.status_code in (200, 201):
-                return {"valid": True}
-            elif resp.status_code == 401:
-                return {"valid": False, "error": "Invalid API key"}
-            else:
-                return {"valid": False, "error": f"HTTP {resp.status_code}"}
+        audio, used_engine = await tts_synthesize(text, preferred_engine=engine, voice=voice)
+        return {"valid": audio is not None, "engine": used_engine, "error": "" if audio else "No audio returned"}
     except Exception as e:
         return {"valid": False, "error": str(e)[:200]}
 
@@ -2430,10 +2372,10 @@ async def api_settings_status():
             "copilot_enabled": env_dict.get("COPILOT_CLI_ENABLED", ""),
             "copilot_model_fast": env_dict.get("COPILOT_MODEL_FAST", ""),
             "copilot_model_smart": env_dict.get("COPILOT_MODEL_SMART", ""),
-            "fish_audio": bool(env_dict.get("FISH_API_KEY", "").strip() and env_dict.get("FISH_API_KEY", "") != "your-fish-audio-api-key-here"),
-            "fish_voice_id": bool(env_dict.get("FISH_VOICE_ID", "").strip()),
-            "tts_base_url": env_dict.get("TTS_BASE_URL", ""),
-            "tts_voice_id": env_dict.get("TTS_VOICE_ID", ""),
+            "tts_engine": env_dict.get("TTS_ENGINE", TTS_ENGINE),
+            "tts_voice": env_dict.get("TTS_VOICE", "") or env_dict.get("TTS_EDGE_VOICE", ""),
+            "tts_kokoro_voice": env_dict.get("TTS_KOKORO_VOICE", ""),
+            "tts_kokoro_device": env_dict.get("TTS_KOKORO_DEVICE", ""),
             "user_name": env_dict.get("USER_NAME", ""),
             "powershell_enabled": env_dict.get("POWERSHELL_ENABLED", ""),
             "powershell_execution_policy": env_dict.get("POWERSHELL_EXECUTION_POLICY", ""),

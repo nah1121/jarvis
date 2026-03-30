@@ -3,7 +3,7 @@
 ## Overview
 - Replaced Anthropic/Claude usage with GitHub Copilot CLI subprocess calls (`copilot chat --message ...`).
 - Centralized Copilot invocation in `copilot_access.py` with async subprocess execution, timeouts, and Windows-friendly command discovery (`copilot` / `copilot.cmd`).
-- Retained Windows adaptations: PowerShell automation, local Fish Speech TTS, and stubbed macOS-only integrations (Calendar/Mail/Notes).
+- Retained Windows adaptations: PowerShell automation, Kokoro/Edge TTS options, and stubbed macOS-only integrations (Calendar/Mail/Notes).
 
 ## Key Files
 - `copilot_access.py` — CopilotRunner wrapper around the Copilot CLI, builds prompts from system + history, handles timeouts/errors.
@@ -12,7 +12,7 @@
 - `actions.py` — Terminal automation opens Copilot CLI sessions; build/research actions no longer invoke Claude.
 - `frontend/src/settings.ts` — Settings panel shows Copilot status/test instead of Anthropic key input.
 - `.env.example` — New Copilot variables (`COPILOT_CLI_ENABLED`, `COPILOT_MODEL_FAST`, `COPILOT_MODEL_SMART`, `COPILOT_TIMEOUT`); Anthropic entries removed.
-- `SETUP_WINDOWS.md`, `start-jarvis.ps1`, `README` references updated to Copilot CLI and local Fish Speech.
+- `SETUP_WINDOWS.md`, `start-jarvis.ps1`, `README` references updated to Copilot CLI and Kokoro/Edge TTS.
 
 ## Behavior Notes
 - Two model tiers selectable via environment (`COPILOT_MODEL_FAST`, `COPILOT_MODEL_SMART`).

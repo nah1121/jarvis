@@ -22,8 +22,10 @@ interface StatusResponse {
     copilot_enabled: string;
     copilot_model_fast: string;
     copilot_model_smart: string;
-    fish_audio: boolean;
-    fish_voice_id: boolean;
+    tts_engine: string;
+    tts_voice: string;
+    tts_kokoro_voice: string;
+    tts_kokoro_device: string;
     user_name: string;
   };
 }
@@ -41,7 +43,7 @@ interface PreferencesResponse {
 let panelEl: HTMLElement | null = null;
 let isOpen = false;
 let isFirstTimeSetup = false;
-let setupStep = 0; // 0=copilot, 1=fish, 2=name, 3=done
+let setupStep = 0; // 0=copilot, 1=tts, 2=name, 3=done
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -94,19 +96,23 @@ function buildPanelHTML(): string {
           </div>
 
           <div class="settings-field">
-            <label>Fish Audio API Key</label>
+            <label>TTS Engine</label>
             <div class="settings-input-row">
-              <input type="password" id="input-fish-key" placeholder="Fish Audio key..." />
-              <button class="settings-btn" id="btn-test-fish">Test</button>
-              <span class="status-dot" id="status-fish"></span>
+              <select id="input-tts-engine">
+                <option value="edge">Edge (default)</option>
+                <option value="kokoro">Kokoro (local)</option>
+              </select>
+              <button class="settings-btn" id="btn-test-tts">Test</button>
+              <span class="status-dot" id="status-tts"></span>
             </div>
+            <p class="settings-hint">Edge uses Microsoft neural voices; Kokoro runs fully local on CPU/GPU.</p>
           </div>
 
           <div class="settings-field">
-            <label>Fish Voice ID</label>
+            <label>TTS Voice</label>
             <div class="settings-input-row">
-              <input type="text" id="input-fish-voice-id" placeholder="612b878b113047d9a770c069c8b4fdfe" />
-              <button class="settings-btn" id="btn-save-voice-id">Save</button>
+              <input type="text" id="input-tts-voice" placeholder="en-GB-RyanNeural or af_bella" />
+              <button class="settings-btn" id="btn-save-tts">Save</button>
             </div>
           </div>
 
@@ -218,7 +224,8 @@ async function loadStatus() {
 
     // API key status dots
     setDotStatus("status-copilot", status.env_keys_set.copilot_enabled ? "green" : "red");
-    setDotStatus("status-fish", status.env_keys_set.fish_audio ? "green" : "red");
+    const hasTts = Boolean(status.env_keys_set.tts_engine);
+    setDotStatus("status-tts", hasTts ? "green" : "red");
 
     // System info
     const memEl = document.getElementById("sysinfo-memory");
@@ -229,6 +236,12 @@ async function loadStatus() {
     if (portEl) portEl.textContent = String(status.server_port);
     const upEl = document.getElementById("sysinfo-uptime");
     if (upEl) upEl.textContent = formatUptime(status.uptime_seconds);
+
+    // Pre-fill TTS fields
+    const engineEl = document.getElementById("input-tts-engine") as HTMLSelectElement | null;
+    if (engineEl) engineEl.value = (status.env_keys_set.tts_engine || "edge").toLowerCase();
+    const voiceEl = document.getElementById("input-tts-voice") as HTMLInputElement | null;
+    if (voiceEl) voiceEl.value = status.env_keys_set.tts_voice || "";
 
     return status;
   } catch (e) {
@@ -258,22 +271,21 @@ function wireEvents() {
   document.getElementById("settings-backdrop")?.addEventListener("click", closeSettings);
 
   // Save keys
-  document.getElementById("btn-save-keys")?.addEventListener("click", async () => {
-    const fishKey = (document.getElementById("input-fish-key") as HTMLInputElement).value.trim();
+  const saveTts = async () => {
+    const engine = (document.getElementById("input-tts-engine") as HTMLSelectElement).value;
+    const voice = (document.getElementById("input-tts-voice") as HTMLInputElement).value.trim();
 
-    if (fishKey) {
-      await apiPost("/api/settings/keys", { key_name: "FISH_API_KEY", key_value: fishKey });
+    if (engine) {
+      await apiPost("/api/settings/keys", { key_name: "TTS_ENGINE", key_value: engine });
+    }
+    if (voice) {
+      await apiPost("/api/settings/keys", { key_name: "TTS_VOICE", key_value: voice });
+      await apiPost("/api/settings/keys", { key_name: "TTS_KOKORO_VOICE", key_value: voice });
     }
     await loadStatus();
-  });
-
-  // Save voice ID
-  document.getElementById("btn-save-voice-id")?.addEventListener("click", async () => {
-    const voiceId = (document.getElementById("input-fish-voice-id") as HTMLInputElement).value.trim();
-    if (voiceId) {
-      await apiPost("/api/settings/keys", { key_name: "FISH_VOICE_ID", key_value: voiceId });
-    }
-  });
+  };
+  document.getElementById("btn-save-keys")?.addEventListener("click", saveTts);
+  document.getElementById("btn-save-tts")?.addEventListener("click", saveTts);
 
   // Test Copilot
   document.getElementById("btn-test-copilot")?.addEventListener("click", async () => {
@@ -286,15 +298,16 @@ function wireEvents() {
     }
   });
 
-  // Test Fish
-  document.getElementById("btn-test-fish")?.addEventListener("click", async () => {
-    setDotStatus("status-fish", "yellow");
-    const key = (document.getElementById("input-fish-key") as HTMLInputElement).value.trim();
+  // Test TTS
+  document.getElementById("btn-test-tts")?.addEventListener("click", async () => {
+    setDotStatus("status-tts", "yellow");
+    const engine = (document.getElementById("input-tts-engine") as HTMLSelectElement).value;
+    const voice = (document.getElementById("input-tts-voice") as HTMLInputElement).value.trim();
     try {
-      const result = await apiPost<{ valid: boolean; error?: string }>("/api/settings/test-fish", { key_value: key || undefined });
-      setDotStatus("status-fish", result.valid ? "green" : "red");
+      const result = await apiPost<{ valid: boolean; error?: string }>("/api/settings/test-tts", { engine, voice: voice || undefined });
+      setDotStatus("status-tts", result.valid ? "green" : "red");
     } catch {
-      setDotStatus("status-fish", "red");
+      setDotStatus("status-tts", "red");
     }
   });
 

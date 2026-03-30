@@ -23,9 +23,9 @@ JARVIS connects to your Apple Calendar, Mail, and Notes (macOS only). It can bro
 
 ### Windows 11 Setup
 
-The Windows version uses **local** LLM and TTS instead of cloud APIs:
-- **free-claude-code** proxy with LM Studio, NVIDIA NIM, or other local LLMs
-- **Fish Speech** local TTS server with voice cloning
+The Windows version uses **GitHub Copilot CLI** plus lightweight TTS:
+- **Kokoro** local TTS (82M params, runs on CPU or small GPU)
+- **Edge-TTS** (Microsoft neural voices) as the default online fallback
 
 **See [SETUP_WINDOWS.md](SETUP_WINDOWS.md) for complete Windows setup guide.**
 
@@ -59,7 +59,7 @@ Quick Windows start:
 - **Node.js 18+**
 - **Google Chrome** (required for Web Speech API)
 - **GitHub Copilot CLI** (`npm install -g @github/copilot`) — powers the AI brain
-- **Fish Audio API key** (optional if using cloud TTS) -- powers the voice ([get one here](https://fish.audio/))
+- **Edge-TTS** (included via `edge-tts` package) or optional Kokoro local TTS
 
 ### Windows 11
 - **Windows 11**
@@ -67,7 +67,7 @@ Quick Windows start:
 - **Node.js 18+**
 - **Google Chrome or Edge**
 - **GitHub Copilot CLI** (`npm install -g @github/copilot`)
-- **Fish Speech** (optional) -- local TTS server ([setup guide](https://github.com/fishaudio/fish-speech))
+- **TTS**: default Edge neural voices; optional local Kokoro for offline/low-latency
 
 ## Manual Setup (macOS)
 
@@ -113,9 +113,12 @@ COPILOT_MODEL_FAST=gpt-4.1-mini
 COPILOT_MODEL_SMART=gpt-4.1
 COPILOT_TIMEOUT=60
 
-# Optional cloud TTS
-# FISH_API_KEY=your-fish-audio-api-key-here
-# FISH_VOICE_ID=612b878b113047d9a770c069c8b4fdfe
+# TTS (Edge by default, set kokoro for local)
+TTS_ENGINE=edge
+TTS_VOICE=en-GB-RyanNeural
+# TTS_KOKORO_VOICE=af_bella
+# TTS_KOKORO_LANG=b
+# TTS_KOKORO_DEVICE=cpu
 
 # Optional -- your name (JARVIS will address you personally)
 USER_NAME=Tony
@@ -135,11 +138,14 @@ COPILOT_MODEL_FAST=gpt-4.1-mini
 COPILOT_MODEL_SMART=gpt-4.1
 COPILOT_TIMEOUT=60
 
-# Local TTS (Fish Speech)
-TTS_BASE_URL=http://localhost:8080
-TTS_VOICE_ID=male_en
-# Or use custom voice cloning:
-# TTS_REFERENCE_AUDIO=C:\fish-speech\references\jarvis.wav
+# Local-friendly TTS
+TTS_ENGINE=edge
+TTS_VOICE=en-GB-RyanNeural
+# Switch to Kokoro for local/offline synthesis:
+# TTS_ENGINE=kokoro
+# TTS_KOKORO_VOICE=af_bella
+# TTS_KOKORO_LANG=b
+# TTS_KOKORO_DEVICE=cpu
 
 # Optional
 USER_NAME=Tony
@@ -148,7 +154,7 @@ USER_NAME=Tony
 ## Architecture
 
 ```
-Microphone -> Web Speech API -> WebSocket -> FastAPI -> Copilot CLI (fast/smart) -> Fish Audio/Fish Speech TTS -> WebSocket -> Speaker
+Microphone -> Web Speech API -> WebSocket -> FastAPI -> Copilot CLI (fast/smart) -> Kokoro (local) or Edge-TTS -> WebSocket -> Speaker
                                                 |
                                                 v
                                         Copilot CLI Tasks
@@ -166,7 +172,7 @@ Microphone -> Web Speech API -> WebSocket -> FastAPI -> Copilot CLI (fast/smart)
 | Communication | WebSocket (JSON messages + binary audio) |
 | AI (fast) | Copilot fast model (`COPILOT_MODEL_FAST`) |
 | AI (deep) | Copilot smart model (`COPILOT_MODEL_SMART`) |
-| TTS | Fish Audio with JARVIS voice model |
+| TTS | Kokoro (local) or Edge neural voices |
 | System | AppleScript for all macOS integrations |
 
 ## How the Voice Loop Works
@@ -177,7 +183,7 @@ Microphone -> Web Speech API -> WebSocket -> FastAPI -> Copilot CLI (fast/smart)
 4. JARVIS detects intent -- conversation, action, or build request
 5. For actions: spawns a Copilot CLI subprocess or runs AppleScript
 6. Generates a response via Copilot CLI (optimized for speed)
-7. Fish Audio converts the response to speech with the JARVIS voice
+7. TTS converts the response to speech (Edge-TTS by default, Kokoro if configured)
 8. Audio streams back to the browser via WebSocket
 9. The Three.js orb deforms and pulses in response to the audio
 10. Background tasks notify you proactively when they complete
@@ -237,7 +243,7 @@ Free for personal, non-commercial use. Commercial use requires a license — vis
 
 Built by [Ethan Rogers](https://ethanplus.ai).
 
-Powered by GitHub Copilot CLI and [Fish Audio](https://fish.audio).
+Powered by GitHub Copilot CLI with Kokoro or Edge neural TTS.
 
 Inspired by the AI that started it all -- Tony Stark's JARVIS.
 

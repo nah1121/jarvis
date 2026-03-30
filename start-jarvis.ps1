@@ -7,26 +7,6 @@ Write-Host "  JARVIS Windows 11 Launcher" -ForegroundColor Cyan
 Write-Host "========================================" -ForegroundColor Cyan
 Write-Host ""
 
-# Function to check if a URL is reachable
-function Test-ServiceRunning {
-    param(
-        [string]$Url,
-        [string]$ServiceName
-    )
-
-    try {
-        $response = Invoke-WebRequest -Uri $Url -Method GET -TimeoutSec 2 -ErrorAction SilentlyContinue
-        if ($response.StatusCode -eq 200 -or $response.StatusCode -eq 404) {
-            Write-Host "[OK] $ServiceName is running at $Url" -ForegroundColor Green
-            return $true
-        }
-    } catch {
-        Write-Host "[WARN] $ServiceName is NOT running at $Url" -ForegroundColor Yellow
-        return $false
-    }
-    return $false
-}
-
 # Check Python
 Write-Host "Checking Python installation..." -ForegroundColor Cyan
 try {
@@ -59,17 +39,6 @@ try {
 }
 
 Write-Host ""
-Write-Host "Checking required services..." -ForegroundColor Cyan
-Write-Host ""
-
-# Check Fish Speech TTS server
-$ttsRunning = Test-ServiceRunning -Url "http://localhost:8080/v1/voices" -ServiceName "Fish Speech TTS"
-if (-not $ttsRunning) {
-    Write-Host "  -> Start Fish Speech: cd C:\fish-speech && python -m fish_speech.api_server" -ForegroundColor Yellow
-    Write-Host "  -> Or update TTS_BASE_URL in .env to your TTS server URL" -ForegroundColor Yellow
-}
-
-Write-Host ""
 
 # Check .env file
 if (-not (Test-Path ".env")) {
@@ -79,7 +48,7 @@ if (-not (Test-Path ".env")) {
         Write-Host "[OK] Created .env file. Please edit it with your settings." -ForegroundColor Green
         Write-Host "  -> Confirm COPILOT_CLI_ENABLED=true" -ForegroundColor Cyan
         Write-Host "  -> Set COPILOT_MODEL_FAST / COPILOT_MODEL_SMART as needed" -ForegroundColor Cyan
-        Write-Host "  -> Set TTS_BASE_URL=http://localhost:8080" -ForegroundColor Cyan
+        Write-Host "  -> TTS_ENGINE=edge (default) or kokoro for local" -ForegroundColor Cyan
     } else {
         Write-Host "[ERROR] .env.example not found" -ForegroundColor Red
         exit 1
