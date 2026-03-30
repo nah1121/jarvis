@@ -19,15 +19,9 @@ class CopilotError(Exception):
     """Raised when the Copilot CLI call fails."""
 
 
-def _find_copilot_command() -> Optional[str]:
-    """Locate the Copilot CLI binary on the system."""
-    for name in ("copilot", "copilot.cmd"):
-        path = shutil.which(name)
-        if path:
-            log.debug(f"Found Copilot CLI at: {path}")
-            return path
-    log.warning("Copilot CLI not found in PATH")
-    return None
+def _check_copilot_available() -> bool:
+    """Check if copilot command is available in PATH."""
+    return shutil.which("copilot") is not None
 
 
 def _format_prompt(system: str, messages: List[Dict[str, str]]) -> str:
@@ -55,13 +49,15 @@ class CopilotRunner:
     enabled: bool = os.getenv("COPILOT_CLI_ENABLED", "true").lower() == "true"
 
     def __post_init__(self):
-        self.command = _find_copilot_command()
-        if not self.command:
-            log.warning("Copilot CLI not found on PATH (copilot/copilot.cmd).")
+        self.copilot_available = _check_copilot_available()
+        if not self.copilot_available:
+            log.warning("Copilot CLI not found in PATH.")
+        else:
+            log.info("Copilot CLI found in PATH.")
 
     @property
     def available(self) -> bool:
-        return self.enabled and bool(self.command)
+        return self.enabled and self.copilot_available
 
     async def chat(
         self,
@@ -83,15 +79,12 @@ class CopilotRunner:
         model = self.smart_model if use_smart else self.fast_model
 
         # Use -p for prompt (non-interactive mode)
-        cmd = [self.command, "-p", prompt]
+        cmd = ["copilot", "-p", prompt]
         if model:
             cmd.extend(["--model", model])
 
-        # Log the exact command for debugging
-        log.debug(f"Copilot CLI path: {self.command}")
-        log.debug(f"Copilot CLI args: {cmd[1:][:2]}... (prompt truncated)")  # Show first 2 args
-        if model:
-            log.debug(f"Copilot model: {model}")
+        # Log the exact command for debugging (excluding full prompt for brevity)
+        log.debug(f"Executing Copilot CLI: copilot -p <prompt> {f'--model {model}' if model else ''}")
         log.debug(f"Working directory: {cwd or 'current'}")
 
         # Log the full command list structure for debugging unknown option errors
@@ -106,7 +99,7 @@ class CopilotRunner:
                 cwd=cwd,
             )
         except FileNotFoundError as e:
-            log.error(f"Copilot CLI executable not found: {self.command}")
+            log.error(f"Copilot CLI executable not found in PATH")
             raise CopilotError("Copilot CLI not found on system.") from e
         except Exception as e:
             log.error(f"Failed to start Copilot CLI subprocess: {e}")
