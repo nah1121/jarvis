@@ -49,23 +49,18 @@ try {
     exit 1
 }
 
+# Check Copilot CLI
+Write-Host "Checking GitHub Copilot CLI..." -ForegroundColor Cyan
+try {
+    $copilotVersion = copilot --version 2>&1
+    Write-Host "[OK] Copilot CLI found: $copilotVersion" -ForegroundColor Green
+} catch {
+    Write-Host "[WARN] Copilot CLI not found. Install with: npm install -g @github/copilot" -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "Checking required services..." -ForegroundColor Cyan
 Write-Host ""
-
-# Check LM Studio (optional but recommended)
-$lmStudioRunning = Test-ServiceRunning -Url "http://localhost:1234/v1/models" -ServiceName "LM Studio"
-if (-not $lmStudioRunning) {
-    Write-Host "  -> Please start LM Studio and load a model, then start the local server" -ForegroundColor Yellow
-    Write-Host "  -> Or configure ANTHROPIC_BASE_URL to point to your LLM provider" -ForegroundColor Yellow
-}
-
-# Check free-claude-code proxy
-$proxyRunning = Test-ServiceRunning -Url "http://localhost:8082/health" -ServiceName "free-claude-code proxy"
-if (-not $proxyRunning) {
-    Write-Host "  -> Start the proxy: cd C:\free-claude-code && python proxy.py" -ForegroundColor Yellow
-    Write-Host "  -> Or update ANTHROPIC_BASE_URL in .env to your proxy URL" -ForegroundColor Yellow
-}
 
 # Check Fish Speech TTS server
 $ttsRunning = Test-ServiceRunning -Url "http://localhost:8080/v1/voices" -ServiceName "Fish Speech TTS"
@@ -82,8 +77,8 @@ if (-not (Test-Path ".env")) {
     if (Test-Path ".env.example") {
         Copy-Item ".env.example" ".env"
         Write-Host "[OK] Created .env file. Please edit it with your settings." -ForegroundColor Green
-        Write-Host "  -> Set ANTHROPIC_BASE_URL=http://localhost:8082" -ForegroundColor Cyan
-        Write-Host "  -> Set ANTHROPIC_API_KEY=freecc" -ForegroundColor Cyan
+        Write-Host "  -> Confirm COPILOT_CLI_ENABLED=true" -ForegroundColor Cyan
+        Write-Host "  -> Set COPILOT_MODEL_FAST / COPILOT_MODEL_SMART as needed" -ForegroundColor Cyan
         Write-Host "  -> Set TTS_BASE_URL=http://localhost:8080" -ForegroundColor Cyan
     } else {
         Write-Host "[ERROR] .env.example not found" -ForegroundColor Red
@@ -94,7 +89,7 @@ if (-not (Test-Path ".env")) {
 # Check if Python dependencies are installed
 Write-Host "Checking Python dependencies..." -ForegroundColor Cyan
 $pipList = pip list 2>&1
-if ($pipList -notmatch "anthropic" -or $pipList -notmatch "fastapi") {
+if ($pipList -notmatch "fastapi") {
     Write-Host "[WARN] Some Python packages may be missing. Installing..." -ForegroundColor Yellow
     pip install -r requirements.txt
 }

@@ -10,7 +10,7 @@
 // ---------------------------------------------------------------------------
 
 interface StatusResponse {
-  claude_code_installed: boolean;
+  copilot_cli_installed: boolean;
   calendar_accessible: boolean;
   mail_accessible: boolean;
   notes_accessible: boolean;
@@ -19,7 +19,9 @@ interface StatusResponse {
   server_port: number;
   uptime_seconds: number;
   env_keys_set: {
-    anthropic: boolean;
+    copilot_enabled: string;
+    copilot_model_fast: string;
+    copilot_model_smart: string;
     fish_audio: boolean;
     fish_voice_id: boolean;
     user_name: string;
@@ -39,7 +41,7 @@ interface PreferencesResponse {
 let panelEl: HTMLElement | null = null;
 let isOpen = false;
 let isFirstTimeSetup = false;
-let setupStep = 0; // 0=anthropic, 1=fish, 2=name, 3=done
+let setupStep = 0; // 0=copilot, 1=fish, 2=name, 3=done
 
 // ---------------------------------------------------------------------------
 // API helpers
@@ -83,12 +85,12 @@ function buildPanelHTML(): string {
           <h3>API Keys</h3>
 
           <div class="settings-field">
-            <label>Anthropic API Key</label>
+            <label>GitHub Copilot CLI</label>
             <div class="settings-input-row">
-              <input type="password" id="input-anthropic-key" placeholder="sk-ant-..." />
-              <button class="settings-btn" id="btn-test-anthropic">Test</button>
-              <span class="status-dot" id="status-anthropic"></span>
+              <button class="settings-btn" id="btn-test-copilot">Test</button>
+              <span class="status-dot" id="status-copilot"></span>
             </div>
+            <p class="settings-hint">Install with npm install -g @github/copilot, then run copilot auth login.</p>
           </div>
 
           <div class="settings-field">
@@ -117,7 +119,7 @@ function buildPanelHTML(): string {
         <section class="settings-section" id="section-status">
           <h3>Connection Status</h3>
           <div class="status-grid">
-            <div class="status-row"><span class="status-dot" id="status-claude-cli"></span><span>Claude Code CLI</span></div>
+            <div class="status-row"><span class="status-dot" id="status-copilot-cli"></span><span>Copilot CLI</span></div>
             <div class="status-row"><span class="status-dot" id="status-calendar"></span><span>Apple Calendar</span></div>
             <div class="status-row"><span class="status-dot" id="status-mail"></span><span>Apple Mail</span></div>
             <div class="status-row"><span class="status-dot" id="status-notes"></span><span>Apple Notes</span></div>
@@ -205,7 +207,7 @@ async function loadStatus() {
   try {
     const status = await apiGet<StatusResponse>("/api/settings/status");
 
-    setDotStatus("status-claude-cli", status.claude_code_installed ? "green" : "red");
+    setDotStatus("status-copilot-cli", status.copilot_cli_installed ? "green" : "red");
     setDotStatus("status-calendar", status.calendar_accessible ? "green" : "red");
     setDotStatus("status-mail", status.mail_accessible ? "green" : "red");
     setDotStatus("status-notes", status.notes_accessible ? "green" : "red");
@@ -215,7 +217,7 @@ async function loadStatus() {
     if (serverDetail) serverDetail.textContent = `port ${status.server_port} | up ${formatUptime(status.uptime_seconds)}`;
 
     // API key status dots
-    setDotStatus("status-anthropic", status.env_keys_set.anthropic ? "green" : "red");
+    setDotStatus("status-copilot", status.env_keys_set.copilot_enabled ? "green" : "red");
     setDotStatus("status-fish", status.env_keys_set.fish_audio ? "green" : "red");
 
     // System info
@@ -257,12 +259,8 @@ function wireEvents() {
 
   // Save keys
   document.getElementById("btn-save-keys")?.addEventListener("click", async () => {
-    const anthropicKey = (document.getElementById("input-anthropic-key") as HTMLInputElement).value.trim();
     const fishKey = (document.getElementById("input-fish-key") as HTMLInputElement).value.trim();
 
-    if (anthropicKey) {
-      await apiPost("/api/settings/keys", { key_name: "ANTHROPIC_API_KEY", key_value: anthropicKey });
-    }
     if (fishKey) {
       await apiPost("/api/settings/keys", { key_name: "FISH_API_KEY", key_value: fishKey });
     }
@@ -277,15 +275,14 @@ function wireEvents() {
     }
   });
 
-  // Test Anthropic
-  document.getElementById("btn-test-anthropic")?.addEventListener("click", async () => {
-    setDotStatus("status-anthropic", "yellow");
-    const key = (document.getElementById("input-anthropic-key") as HTMLInputElement).value.trim();
+  // Test Copilot
+  document.getElementById("btn-test-copilot")?.addEventListener("click", async () => {
+    setDotStatus("status-copilot", "yellow");
     try {
-      const result = await apiPost<{ valid: boolean; error?: string }>("/api/settings/test-anthropic", { key_value: key || undefined });
-      setDotStatus("status-anthropic", result.valid ? "green" : "red");
+      const result = await apiPost<{ valid: boolean; error?: string }>("/api/settings/test-copilot", {});
+      setDotStatus("status-copilot", result.valid ? "green" : "red");
     } catch {
-      setDotStatus("status-anthropic", "red");
+      setDotStatus("status-copilot", "red");
     }
   });
 
@@ -400,7 +397,7 @@ export async function openSettings() {
   await loadPreferences();
 
   // Check for first-time setup
-  if (status && !status.env_keys_set.anthropic) {
+  if (status && !status.env_keys_set.copilot_enabled) {
     enterSetupMode();
   }
 }
@@ -424,7 +421,7 @@ export function isSettingsOpen(): boolean {
 export async function checkFirstTimeSetup(): Promise<boolean> {
   try {
     const status = await apiGet<StatusResponse>("/api/settings/status");
-    if (!status.env_keys_set.anthropic) {
+    if (!status.env_keys_set.copilot_enabled) {
       openSettings();
       return true;
     }

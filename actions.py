@@ -200,36 +200,36 @@ async def open_chrome(url: str) -> dict:
     return await open_browser(url, "chrome")
 
 
-async def open_claude_in_project(project_dir: str, prompt: str) -> dict:
-    """Open Terminal, cd to project dir, run Claude Code interactively. Windows stub.
+async def open_copilot_in_project(project_dir: str, prompt: str) -> dict:
+    """Open Terminal, cd to project dir, run Copilot CLI interactively. Windows stub.
 
-    Writes the prompt to CLAUDE.md (which claude reads automatically on startup)
-    then launches claude in interactive mode with --dangerously-skip-permissions.
-    No prompt escaping needed — CLAUDE.md handles context delivery.
+    Writes the prompt to COPILOT_PROMPT.txt for reference, then launches Copilot
+    in interactive mode with the prompt preloaded.
     """
-    # Write prompt to CLAUDE.md — claude reads this automatically
-    claude_md = Path(project_dir) / "CLAUDE.md"
-    claude_md.write_text(f"# Task\n\n{prompt}\n\nBuild this completely. If web app, make index.html work standalone.\n")
+    prompt_file = Path(project_dir) / "COPILOT_PROMPT.txt"
+    prompt_file.write_text(f"# Task\n\n{prompt}\n\nBuild this completely. If web app, make index.html work standalone.\n")
+
+    escaped_prompt = prompt.replace('"', '\\"')
 
     if IS_WINDOWS:
         escaped_path = str(Path(project_dir)).replace('"', '\\"')
         ps_launch = (
             f"Start-Process powershell.exe -ArgumentList '-NoExit','-Command','cd \"{escaped_path}\"; "
-            "claude --dangerously-skip-permissions'"
+            f"copilot chat --message \"{escaped_prompt}\"'"
         )
         result = await execute_terminal_command(ps_launch)
         confirmation = (
-            "Claude Code is running in PowerShell, sir."
+            "Copilot CLI is running in PowerShell, sir."
             if result["success"]
             else result["confirmation"]
         )
         return {"success": result["success"], "confirmation": confirmation}
 
-    # Launch claude interactive — it reads CLAUDE.md on its own
+    # Launch Copilot interactive with the prompt
     script = (
         'tell application "Terminal"\n'
         "    activate\n"
-        f'    do script "cd {project_dir} && claude --dangerously-skip-permissions"\n'
+        f'    do script "cd {project_dir} && copilot chat --message \\\"{escaped_prompt}\\\""\n'
         "end tell"
     )
     proc = await asyncio.create_subprocess_exec(
@@ -240,21 +240,21 @@ async def open_claude_in_project(project_dir: str, prompt: str) -> dict:
     _, stderr = await proc.communicate()
     success = proc.returncode == 0
     if not success:
-        log.error(f"open_claude_in_project failed: {stderr.decode()}")
+        log.error(f"open_copilot_in_project failed: {stderr.decode()}")
     else:
         await _mark_terminal_as_jarvis()
     return {
         "success": success,
-        "confirmation": "Claude Code is running in Terminal, sir. You can watch the progress."
+        "confirmation": "Copilot CLI is running in Terminal, sir. You can watch the progress."
         if success
-        else "Had trouble spawning Claude Code, sir.",
+        else "Had trouble spawning Copilot CLI, sir.",
     }
 
 
 async def prompt_existing_terminal(project_name: str, prompt: str) -> dict:
     """Find a Terminal window matching a project name and type a prompt into it. Windows stub.
 
-    Uses System Events keystroke to type into an active Claude Code session
+    Uses System Events keystroke to type into an active Copilot CLI session
     rather than `do script` which would open a new shell.
     """
     if IS_WINDOWS:
@@ -370,7 +370,7 @@ async def get_chrome_tab_info() -> dict:
 
 
 async def monitor_build(project_dir: str, ws=None, synthesize_fn=None) -> None:
-    """Monitor a Claude Code build for completion. Notify via WebSocket when done."""
+    """Monitor a Copilot CLI build for completion. Notify via WebSocket when done."""
     import base64
 
     output_file = Path(project_dir) / ".jarvis_output.txt"
@@ -412,7 +412,7 @@ async def execute_action(intent: dict, projects: list = None) -> dict:
     target = intent.get("target", "")
 
     if action == "open_terminal":
-        result = await open_terminal("claude --dangerously-skip-permissions")
+        result = await open_terminal("copilot")
         result["project_dir"] = None
         return result
 
@@ -434,11 +434,11 @@ async def execute_action(intent: dict, projects: list = None) -> dict:
         return result
 
     elif action == "build":
-        # Create project folder on Desktop, spawn Claude Code
+        # Create project folder on Desktop, spawn Copilot CLI
         project_name = _generate_project_name(target)
         project_dir = str(DESKTOP_PATH / project_name)
         os.makedirs(project_dir, exist_ok=True)
-        result = await open_claude_in_project(project_dir, target)
+        result = await open_copilot_in_project(project_dir, target)
         result["project_dir"] = project_dir
         return result
     elif action == "run_command":
