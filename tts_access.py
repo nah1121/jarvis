@@ -3,6 +3,8 @@ import io
 import logging
 import os
 import tempfile
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -14,9 +16,8 @@ log = logging.getLogger("jarvis.tts")
 
 DEFAULT_ENGINE = os.getenv("TTS_ENGINE", "piper").lower()
 PIPER_VOICE = os.getenv("PIPER_VOICE", "en_US-ryan-high")
-PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "")  # Auto-download if empty
-PIPER_SAMPLE_RATE = int(os.getenv("PIPER_SAMPLE_RATE", "22050"))
-PIPER_USE_GPU = os.getenv("PIPER_USE_GPU", "true").lower() in ("true", "1", "yes")
+PIPER_MODEL_PATH = os.getenv("PIPER_MODEL_PATH", "")  # Auto-downloads to ./voices/ if empty
+PIPER_USE_GPU = os.getenv("PIPER_USE_GPU", "false").lower() in ("true", "1", "yes")
 PYTTSX3_VOICE = os.getenv("PYTTSX3_VOICE", "")  # Empty = default Windows voice
 PYTTSX3_RATE = int(os.getenv("PYTTSX3_RATE", "180"))  # Words per minute
 
@@ -24,6 +25,77 @@ _piper_voice = None
 _piper_lock = asyncio.Lock()
 _pyttsx3_engine = None
 _pyttsx3_lock = asyncio.Lock()
+
+# HuggingFace base URL for official Piper voice models
+_PIPER_HF_BASE = (
+    "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
+)
+
+
+def _download_piper_model(voice_name: str, voices_dir: Path) -> Optional[str]:
+    """Download a Piper voice model from HuggingFace if not already present.
+
+    Voice name format: ``{locale}-{speaker}-{quality}``
+    e.g. ``en_US-ryan-high``, ``en_GB-alan-medium``
+
+    Downloads both the ``.onnx`` model and its ``.onnx.json`` config to
+    *voices_dir*, creating the directory if necessary.
+
+    Returns the path to the downloaded ``.onnx`` file, or ``None`` on failure.
+    """
+    parts = voice_name.rsplit("-", 1)  # split off quality suffix
+    if len(parts) != 2:
+        log.warning(
+            "Cannot parse voice name %r for auto-download "
+            "(expected format: locale-speaker-quality, e.g. en_US-ryan-high)",
+            voice_name,
+        )
+        return None
+
+    locale_speaker, quality = parts  # e.g. "en_US-ryan", "high"
+    locale_parts = locale_speaker.split("-", 1)
+    if len(locale_parts) != 2:
+        log.warning("Cannot parse locale/speaker from %r", locale_speaker)
+        return None
+
+    locale, speaker = locale_parts  # e.g. "en_US", "ryan"
+    lang = locale.split("_")[0].lower()  # e.g. "en"
+
+    # Construct URL path:
+    # {lang}/{locale}/{speaker}/{quality}/{voice_name}.onnx
+    rel = f"{lang}/{locale}/{speaker}/{quality}/{voice_name}"
+    onnx_url = f"{_PIPER_HF_BASE}/{rel}.onnx"
+    json_url = f"{_PIPER_HF_BASE}/{rel}.onnx.json"
+
+    voices_dir.mkdir(parents=True, exist_ok=True)
+    onnx_path = voices_dir / f"{voice_name}.onnx"
+    json_path = voices_dir / f"{voice_name}.onnx.json"
+
+    if onnx_path.exists() and json_path.exists():
+        log.info("Piper model already cached at %s", onnx_path)
+        return str(onnx_path)
+
+    log.info(
+        "Auto-downloading Piper voice %r from HuggingFace (~25-60 MB)...",
+        voice_name,
+    )
+    for url, dest in [(onnx_url, onnx_path), (json_url, json_path)]:
+        if dest.exists():
+            continue
+        try:
+            log.info("  Downloading %s -> %s", url, dest)
+            urllib.request.urlretrieve(url, dest)  # noqa: S310 - URL is known-safe constant
+        except (urllib.error.URLError, OSError) as exc:
+            log.warning("Failed to download %s: %s", url, exc)
+            # Remove any partial file so a future attempt can retry cleanly
+            try:
+                dest.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return None
+
+    log.info("Piper voice %r downloaded to %s", voice_name, onnx_path)
+    return str(onnx_path)
 
 
 async def synthesize(
@@ -97,10 +169,20 @@ async def _ensure_piper_voice():
                         break
 
                 if not model_path:
+                    # Auto-download from HuggingFace
+                    log.info(
+                        "Piper model not found locally; attempting auto-download for %r",
+                        voice_name,
+                    )
+                    voices_dir = Path("voices")
+                    model_path = _download_piper_model(voice_name, voices_dir)
+
+                if not model_path:
                     log.warning(
-                        f"Piper model not found. Set PIPER_MODEL_PATH or place "
-                        f"{voice_name}.onnx in ./voices/ directory. "
-                        f"Download from https://github.com/rhasspy/piper/releases"
+                        "Piper model unavailable. Set PIPER_MODEL_PATH, place "
+                        "%s.onnx in ./voices/, or ensure internet access for "
+                        "auto-download from HuggingFace.",
+                        voice_name,
                     )
                     return None
 
@@ -251,8 +333,8 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
             # Clean up
             try:
                 os.unlink(tmp_path)
-            except:
-                pass
+            except OSError as e:
+                log.debug("Failed to delete temporary WAV file %s: %s", tmp_path, e)
 
             return audio_bytes
         except Exception as e:
