@@ -24,7 +24,9 @@ def _find_copilot_command() -> Optional[str]:
     for name in ("copilot", "copilot.cmd"):
         path = shutil.which(name)
         if path:
+            log.debug(f"Found Copilot CLI at: {path}")
             return path
+    log.warning("Copilot CLI not found in PATH")
     return None
 
 
@@ -85,9 +87,16 @@ class CopilotRunner:
         if model:
             cmd.extend(["--model", model])
 
-        # Log the exact command for debugging (excluding full prompt for brevity)
-        log.debug(f"Executing Copilot CLI: {self.command} -p <prompt> {f'--model {model}' if model else ''}")
+        # Log the exact command for debugging
+        log.debug(f"Copilot CLI path: {self.command}")
+        log.debug(f"Copilot CLI args: {cmd[1:][:2]}... (prompt truncated)")  # Show first 2 args
+        if model:
+            log.debug(f"Copilot model: {model}")
         log.debug(f"Working directory: {cwd or 'current'}")
+
+        # Log the full command list structure for debugging unknown option errors
+        cmd_preview = [cmd[0], cmd[1], f"<{len(prompt)} chars>"] + cmd[3:]
+        log.debug(f"Full command structure: {cmd_preview}")
 
         try:
             process = await asyncio.create_subprocess_exec(
@@ -116,6 +125,18 @@ class CopilotRunner:
             # Log full stderr for debugging
             log.error(f"Copilot CLI failed (exit code {process.returncode})")
             log.error(f"stderr: {error_text}")
+
+            # Check for common errors and provide helpful guidance
+            if "--no-warnings" in error_text or "unknown option" in error_text.lower():
+                log.error(
+                    "Copilot CLI reported an unknown option error. "
+                    "This may indicate:\n"
+                    "  1. A PowerShell alias or function is wrapping the copilot command\n"
+                    "  2. An environment variable is adding extra flags\n"
+                    "  3. The copilot binary is a wrapper script with incompatible options\n"
+                    f"  Command being executed: {cmd_preview}"
+                )
+
             raise CopilotError(error_text or "Copilot CLI returned a non-zero exit code.")
 
         result = stdout.decode(errors="ignore").strip()
