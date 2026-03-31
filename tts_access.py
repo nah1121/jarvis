@@ -377,16 +377,11 @@ async def _ensure_pyttsx3_engine():
 
 
 async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes]:
-    """Generate speech using pyttsx3 (Windows SAPI5 fallback)."""
-    try:
-        engine = await _ensure_pyttsx3_engine()
-    except Exception as e:
-        log.warning(f"pyttsx3 engine error: {e}", exc_info=True)
-        return None
+    """Generate speech using pyttsx3 (Windows SAPI5 fallback).
 
-    if engine is None:
-        return None
-
+    NOTE: We create a fresh engine for each call to avoid runAndWait() hanging
+    issues when reusing cached engines in async/threading contexts.
+    """
     # Sanitize text for TTS: normalize unicode, remove problematic characters
     sanitized_text = _sanitize_text_for_tts(text)
     if not sanitized_text or not sanitized_text.strip():
@@ -397,6 +392,26 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
 
     def _render():
         try:
+            # Import pyttsx3
+            try:
+                import pyttsx3
+            except ImportError:
+                log.warning("pyttsx3 not installed. Run `pip install pyttsx3`.")
+                return None
+
+            # Create a FRESH engine for this call (do NOT reuse cached engine)
+            # This prevents runAndWait() from hanging on subsequent calls
+            engine = pyttsx3.init()
+            engine.setProperty("rate", PYTTSX3_RATE)
+
+            # Set voice if specified
+            if PYTTSX3_VOICE:
+                voices = engine.getProperty("voices")
+                for v in voices:
+                    if PYTTSX3_VOICE.lower() in v.name.lower() or PYTTSX3_VOICE in v.id:
+                        engine.setProperty("voice", v.id)
+                        break
+
             # Save to temporary WAV file
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp_path = tmp.name
@@ -408,17 +423,24 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
             with open(tmp_path, "rb") as f:
                 audio_bytes = f.read()
 
-            # Clean up
+            # Clean up temp file
             try:
                 os.unlink(tmp_path)
             except OSError as e:
                 log.debug("Failed to delete temporary WAV file %s: %s", tmp_path, e)
+
+            # Clean up engine
+            try:
+                engine.stop()
+            except Exception:
+                pass
 
             # Check if synthesis produced empty audio
             if not audio_bytes:
                 log.warning("pyttsx3 synthesis produced empty audio")
                 return None
 
+            log.info(f"pyttsx3 synthesis SUCCESS: {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
             log.warning(f"pyttsx3 synthesis error: {e}", exc_info=True)
