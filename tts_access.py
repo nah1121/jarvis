@@ -306,13 +306,23 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
         try:
             # Synthesize to WAV bytes
             audio_stream = io.BytesIO()
+
+            log.info(f"Piper: Starting synthesis for text: {sanitized_text[:50]}...")
+
+            # Call synthesize - this should write WAV data to the stream
             voice_obj.synthesize(sanitized_text, audio_stream)
-            audio_stream.seek(0)
-            audio_bytes = audio_stream.read()
+
+            # Get the bytes written to the stream using getvalue()
+            # This is more reliable than seek(0) + read()
+            audio_bytes = audio_stream.getvalue()
+
+            log.info(f"Piper: Retrieved {len(audio_bytes)} bytes from stream")
 
             # Check if synthesis produced empty audio
             if not audio_bytes:
                 log.warning("Piper synthesis produced empty audio")
+                log.warning(f"Piper: Stream position: {audio_stream.tell()}")
+                log.warning(f"Piper: Stream size: {len(audio_stream.getvalue())}")
                 return None
 
             log.info(f"Piper synthesis SUCCESS: {len(audio_bytes)} bytes")
