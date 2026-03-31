@@ -304,29 +304,50 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
 
     def _render():
         try:
-            # Synthesize to WAV bytes
-            audio_stream = io.BytesIO()
-
             log.info(f"Piper: Starting synthesis for text: {sanitized_text[:50]}...")
 
-            # Call synthesize - this is a GENERATOR that yields audio chunks
-            # We need to iterate over it to ensure audio is written to the stream
-            for audio_chunk in voice_obj.synthesize(sanitized_text, audio_stream):
-                # The chunks are written to audio_stream by the synthesize method
-                # We just need to iterate to completion
-                pass
+            # Synthesize returns a generator that yields audio chunks (as numpy arrays)
+            # The synthesize method takes just the text, not a stream
+            # We collect the chunks and write them to a WAV file ourselves
+            audio_chunks = []
 
-            # Get the bytes written to the stream using getvalue()
-            # This is more reliable than seek(0) + read()
+            for audio_chunk in voice_obj.synthesize(sanitized_text):
+                # audio_chunk is a numpy array of audio samples
+                audio_chunks.append(audio_chunk)
+
+            log.info(f"Piper: Collected {len(audio_chunks)} audio chunks")
+
+            if not audio_chunks:
+                log.warning("Piper synthesis produced no audio chunks")
+                return None
+
+            # Convert chunks to WAV bytes
+            import wave
+            import numpy as np
+
+            audio_stream = io.BytesIO()
+
+            # Concatenate all audio chunks
+            audio_data = np.concatenate(audio_chunks)
+
+            # Write WAV file to BytesIO
+            with wave.open(audio_stream, 'wb') as wav_file:
+                # Piper outputs 16-bit PCM audio at 22050 Hz (default)
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)   # 16-bit
+                wav_file.setframerate(22050)  # Sample rate
+
+                # Convert float32 audio to int16
+                audio_int16 = (audio_data * 32767).astype(np.int16)
+                wav_file.writeframes(audio_int16.tobytes())
+
+            # Get the WAV bytes
             audio_bytes = audio_stream.getvalue()
 
-            log.info(f"Piper: Retrieved {len(audio_bytes)} bytes from stream")
+            log.info(f"Piper: Created WAV file with {len(audio_bytes)} bytes")
 
-            # Check if synthesis produced empty audio
             if not audio_bytes:
                 log.warning("Piper synthesis produced empty audio")
-                log.warning(f"Piper: Stream position: {audio_stream.tell()}")
-                log.warning(f"Piper: Stream size: {len(audio_stream.getvalue())}")
                 return None
 
             log.info(f"Piper synthesis SUCCESS: {len(audio_bytes)} bytes")
