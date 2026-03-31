@@ -314,11 +314,37 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
             # Synthesize returns a generator that yields audio chunks (as numpy arrays)
             # The synthesize method takes just the text, not a stream
             # We collect the chunks and write them to a WAV file ourselves
+            import numpy as np
+
+            try:
+                from piper import AudioChunk as PiperAudioChunk
+            except Exception:  # pragma: no cover - defensive import for older piper versions
+                PiperAudioChunk = None
+
             audio_chunks = []
+            raw_first_chunk = None
+            chunk_sample_rate = None
+            chunk_sample_width = None
+            chunk_sample_channels = None
 
             for audio_chunk in voice_obj.synthesize(sanitized_text):
-                # audio_chunk is a numpy array of audio samples
-                audio_chunks.append(audio_chunk)
+                if raw_first_chunk is None:
+                    raw_first_chunk = audio_chunk
+
+                if PiperAudioChunk is not None and isinstance(audio_chunk, PiperAudioChunk):
+                    chunk_sample_rate = chunk_sample_rate or getattr(audio_chunk, "sample_rate", None)
+                    chunk_sample_width = chunk_sample_width or getattr(audio_chunk, "sample_width", None)
+                    chunk_sample_channels = chunk_sample_channels or getattr(audio_chunk, "sample_channels", None)
+                    chunk_array = np.asarray(audio_chunk.audio_float_array)
+                else:
+                    # Older piper versions yield numpy arrays directly
+                    chunk_array = np.asarray(audio_chunk)
+
+                if chunk_array is None:
+                    log.warning("Piper returned an empty audio chunk; skipping")
+                    continue
+
+                audio_chunks.append(chunk_array)
 
             log.info(f"Piper: Collected {len(audio_chunks)} audio chunks")
 
@@ -328,15 +354,22 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
 
             # Convert chunks to WAV bytes
             import wave
-            import numpy as np
 
             # Debug: log shape of first chunk
+            if raw_first_chunk is not None:
+                log.info(
+                    "Piper: First raw chunk type=%s, shape=%s, dtype=%s",
+                    type(raw_first_chunk).__name__,
+                    getattr(raw_first_chunk, "shape", "no shape"),
+                    getattr(raw_first_chunk, "dtype", "no dtype"),
+                )
+
             if audio_chunks:
                 first_chunk = audio_chunks[0]
                 chunk_type = type(first_chunk).__name__
                 chunk_shape = getattr(first_chunk, 'shape', 'no shape')
                 chunk_dtype = getattr(first_chunk, 'dtype', 'no dtype')
-                log.info(f"Piper: First chunk type={chunk_type}, shape={chunk_shape}, dtype={chunk_dtype}")
+                log.info(f"Piper: First chunk array type={chunk_type}, shape={chunk_shape}, dtype={chunk_dtype}")
 
             audio_stream = io.BytesIO()
 
@@ -358,13 +391,18 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
 
             # Write WAV file to BytesIO
             with wave.open(audio_stream, 'wb') as wav_file:
-                # Piper outputs 16-bit PCM audio at 22050 Hz (default)
-                wav_file.setnchannels(1)  # Mono
-                wav_file.setsampwidth(2)   # 16-bit
-                wav_file.setframerate(22050)  # Sample rate
+                # Piper outputs 16-bit PCM audio; prefer model-provided metadata if available
+                sample_rate = chunk_sample_rate or 22050
+                sample_width = chunk_sample_width or 2   # bytes
+                sample_channels = chunk_sample_channels or 1
+
+                wav_file.setnchannels(sample_channels)
+                wav_file.setsampwidth(sample_width)
+                wav_file.setframerate(sample_rate)
 
                 # Convert float32 audio to int16
-                audio_int16 = (audio_data * 32767).astype(np.int16)
+                audio_int16 = np.clip(audio_data, -1.0, 1.0)
+                audio_int16 = (audio_int16 * 32767).astype(np.int16)
                 wav_file.writeframes(audio_int16.tobytes())
 
             # Get the WAV bytes
