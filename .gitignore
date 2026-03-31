@@ -45,3 +45,6 @@ desktop-overlay/node_modules/
 context/
 *.db-shm
 *.db-wal
+
+# Test files
+test_copilot_capture.py
