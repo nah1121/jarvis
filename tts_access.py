@@ -2,7 +2,9 @@ import asyncio
 import io
 import logging
 import os
+import re
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +41,49 @@ _pyttsx3_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyttsx
 _PIPER_HF_BASE = (
     "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 )
+
+
+def _sanitize_text_for_tts(text: str) -> str:
+    """Sanitize text for TTS engines to handle special characters and unicode.
+
+    Many TTS engines struggle with:
+    - Non-ASCII unicode characters (accents, special symbols)
+    - Control characters
+    - Emojis and other unicode symbols
+
+    This function normalizes the text to ASCII-safe equivalents.
+    """
+    if not text:
+        return ""
+
+    # Normalize unicode to decomposed form, then remove combining characters
+    # This converts é -> e, ñ -> n, etc.
+    text = unicodedata.normalize('NFKD', text)
+    text = ''.join(c for c in text if not unicodedata.combining(c))
+
+    # Replace common unicode symbols with ASCII equivalents
+    replacements = {
+        '—': '-',  # em dash
+        '–': '-',  # en dash
+        ''': "'",  # smart quote
+        ''': "'",  # smart quote
+        '"': '"',  # smart double quote
+        '"': '"',  # smart double quote
+        '…': '...',  # ellipsis
+        '°': ' degrees',  # degree symbol
+        '×': 'x',  # multiplication
+        '÷': '/',  # division
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    # Remove any remaining non-ASCII characters
+    text = ''.join(c if ord(c) < 128 else ' ' for c in text)
+
+    # Clean up multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+
+    return text.strip()
 
 
 def _download_piper_model(voice_name: str, voices_dir: Path) -> Optional[str]:
@@ -251,21 +296,87 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
     if voice_obj is None:
         return None
 
+    # Sanitize text for TTS: normalize unicode, remove problematic characters
+    sanitized_text = _sanitize_text_for_tts(text)
+    log.info(f"Piper: Original text length: {len(text)}, Sanitized: {len(sanitized_text)}")
+    log.info(f"Piper: Sanitized text preview: {sanitized_text[:100]}")
+
+    if not sanitized_text or not sanitized_text.strip():
+        log.warning("Text became empty after sanitization")
+        return None
+
     loop = asyncio.get_event_loop()
 
     def _render():
         try:
-            # Synthesize to WAV bytes
-            audio_stream = io.BytesIO()
-            voice_obj.synthesize(text, audio_stream)
-            audio_stream.seek(0)
-            audio_bytes = audio_stream.read()
+            log.info(f"Piper: Starting synthesis for text: {sanitized_text[:50]}...")
 
-            # Validate that audio was actually generated
-            if not audio_bytes or len(audio_bytes) == 0:
+            # Synthesize returns a generator that yields audio chunks (as numpy arrays)
+            # The synthesize method takes just the text, not a stream
+            # We collect the chunks and write them to a WAV file ourselves
+            audio_chunks = []
+
+            for audio_chunk in voice_obj.synthesize(sanitized_text):
+                # audio_chunk is a numpy array of audio samples
+                audio_chunks.append(audio_chunk)
+
+            log.info(f"Piper: Collected {len(audio_chunks)} audio chunks")
+
+            if not audio_chunks:
+                log.warning("Piper synthesis produced no audio chunks")
+                return None
+
+            # Convert chunks to WAV bytes
+            import wave
+            import numpy as np
+
+            # Debug: log shape of first chunk
+            if audio_chunks:
+                first_chunk = audio_chunks[0]
+                chunk_type = type(first_chunk).__name__
+                chunk_shape = getattr(first_chunk, 'shape', 'no shape')
+                chunk_dtype = getattr(first_chunk, 'dtype', 'no dtype')
+                log.info(f"Piper: First chunk type={chunk_type}, shape={chunk_shape}, dtype={chunk_dtype}")
+
+            audio_stream = io.BytesIO()
+
+            # Concatenate all audio chunks
+            # Handle both 1D arrays and 0D scalars by ensuring all chunks are at least 1D
+            if len(audio_chunks) == 1:
+                # Single chunk - ensure it's at least 1D
+                audio_data = np.atleast_1d(audio_chunks[0])
+            else:
+                # Multiple chunks - ensure each is 1D before concatenating
+                audio_data = np.concatenate([np.atleast_1d(chunk) for chunk in audio_chunks])
+
+            log.info(f"Piper: Concatenated audio_data shape={audio_data.shape}, dtype={audio_data.dtype}, size={audio_data.size}")
+
+            # Validate we have audio samples
+            if audio_data.size == 0:
+                log.warning("Piper synthesis produced empty audio data array")
+                return None
+
+            # Write WAV file to BytesIO
+            with wave.open(audio_stream, 'wb') as wav_file:
+                # Piper outputs 16-bit PCM audio at 22050 Hz (default)
+                wav_file.setnchannels(1)  # Mono
+                wav_file.setsampwidth(2)   # 16-bit
+                wav_file.setframerate(22050)  # Sample rate
+
+                # Convert float32 audio to int16
+                audio_int16 = (audio_data * 32767).astype(np.int16)
+                wav_file.writeframes(audio_int16.tobytes())
+
+            # Get the WAV bytes
+            audio_bytes = audio_stream.getvalue()
+
+            log.info(f"Piper: Created WAV file with {len(audio_bytes)} bytes")
+
+            if not audio_bytes:
                 log.warning("Piper synthesis produced empty audio")
                 return None
 
+            log.info(f"Piper synthesis SUCCESS: {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
             log.warning(f"Piper synthesis error: {e}", exc_info=True)
@@ -327,47 +438,85 @@ async def _ensure_pyttsx3_engine():
 
 
 async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes]:
-    """Generate speech using pyttsx3 (Windows SAPI5 fallback)."""
-    # Validate input text
-    if not text or not text.strip():
-        log.warning("pyttsx3 synthesis called with empty text")
-        return None
+    """Generate speech using pyttsx3 (Windows SAPI5 fallback).
 
-    try:
-        engine = await _ensure_pyttsx3_engine()
-    except Exception as e:
-        log.warning(f"pyttsx3 engine error: {e}", exc_info=True)
-        return None
-
-    if engine is None:
+    NOTE: We create a fresh engine for each call to avoid runAndWait() hanging
+    issues when reusing cached engines in async/threading contexts.
+    """
+    # Sanitize text for TTS: normalize unicode, remove problematic characters
+    sanitized_text = _sanitize_text_for_tts(text)
+    if not sanitized_text or not sanitized_text.strip():
+        log.warning("Text became empty after sanitization")
         return None
 
     loop = asyncio.get_event_loop()
 
     def _render():
         try:
+            # Import pyttsx3
+            try:
+                import pyttsx3
+            except ImportError:
+                log.warning("pyttsx3 not installed. Run `pip install pyttsx3`.")
+                return None
+
+            log.info("pyttsx3: Creating fresh engine...")
+
+            # Create a FRESH engine for this call (do NOT reuse cached engine)
+            # This prevents runAndWait() from hanging on subsequent calls
+            engine = pyttsx3.init()
+
+            log.info("pyttsx3: Setting rate...")
+            engine.setProperty("rate", PYTTSX3_RATE)
+
+            # Set voice if specified
+            if PYTTSX3_VOICE:
+                log.info(f"pyttsx3: Setting voice to {PYTTSX3_VOICE}...")
+                voices = engine.getProperty("voices")
+                for v in voices:
+                    if PYTTSX3_VOICE.lower() in v.name.lower() or PYTTSX3_VOICE in v.id:
+                        engine.setProperty("voice", v.id)
+                        break
+
             # Save to temporary WAV file
+            log.info("pyttsx3: Creating temp file...")
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp_path = tmp.name
 
-            engine.save_to_file(text, tmp_path)
+            log.info(f"pyttsx3: Saving to temp file {tmp_path}...")
+            engine.save_to_file(sanitized_text, tmp_path)
+
+            log.info("pyttsx3: Running engine (this may take a moment)...")
             engine.runAndWait()
+
+            log.info("pyttsx3: Engine completed, reading audio bytes...")
 
             # Read WAV bytes
             with open(tmp_path, "rb") as f:
                 audio_bytes = f.read()
 
-            # Clean up
+            log.info(f"pyttsx3: Read {len(audio_bytes)} bytes from temp file")
+
+            # Clean up temp file
             try:
                 os.unlink(tmp_path)
+                log.info("pyttsx3: Cleaned up temp file")
             except OSError as e:
                 log.debug("Failed to delete temporary WAV file %s: %s", tmp_path, e)
 
-            # Validate that audio was actually generated
-            if not audio_bytes or len(audio_bytes) == 0:
+            # Clean up engine
+            try:
+                engine.stop()
+                log.info("pyttsx3: Engine stopped")
+            except Exception:
+                pass
+
+            # Check if synthesis produced empty audio
+            if not audio_bytes:
                 log.warning("pyttsx3 synthesis produced empty audio")
                 return None
 
+            log.info(f"pyttsx3 synthesis SUCCESS: {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
             log.warning(f"pyttsx3 synthesis error: {e}", exc_info=True)

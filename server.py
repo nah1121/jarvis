@@ -1018,13 +1018,16 @@ _last_greeting_time: float = 0
 async def synthesize_speech(text: str) -> Optional[bytes]:
     """Generate speech audio from text using Piper (local) or pyttsx3 (fallback)."""
 
+    log.info(f"synthesize_speech called with text length: {len(text)} chars")
+    log.info(f"Text preview: {text[:100]}")
+
     audio, engine = await tts_synthesize(text)
     if audio:
         _session_tokens["tts_calls"] += 1
         _append_usage_entry(0, 0, "tts")
-        log.debug(f"TTS generated using {engine}: {len(audio)} bytes")
+        log.info(f"TTS SUCCESS: generated using {engine}: {len(audio)} bytes")
     else:
-        log.warning("TTS unavailable (Piper/pyttsx3 both failed)")
+        log.warning("TTS FAILED: unavailable (Piper/pyttsx3 both failed)")
     return audio
 
 
@@ -1497,7 +1500,7 @@ async def handle_build(target: str) -> str:
     script = (
         'tell application "Terminal"\n'
         "    activate\n"
-        f'    do script "cd {path} && copilot -p \\\"$(cat .jarvis_prompt.txt)\\\""\n'
+        f'    do script "cd {path} && copilot -p \\\"$(cat .jarvis_prompt.txt)\\\" -s"\n'
         "end tell"
     )
     await asyncio.create_subprocess_exec(
@@ -2422,7 +2425,7 @@ async def api_fix_self():
     script = (
         'tell application "Terminal"\n'
         '    activate\n'
-        f'    do script "cd {jarvis_dir} && copilot"\n'
+        f'    do script "cd {jarvis_dir} && copilot -s"\n'
         'end tell'
     )
     await asyncio.create_subprocess_exec(

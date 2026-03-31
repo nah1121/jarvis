@@ -1,7 +1,7 @@
 # JARVIS — Copilot CLI Migration (Windows-ready)
 
 ## Overview
-- Replaced Anthropic/Claude usage with GitHub Copilot CLI subprocess calls using non-interactive mode (`copilot -p ...`).
+- Replaced Anthropic/Claude usage with GitHub Copilot CLI subprocess calls using non-interactive mode (`copilot -p ... -s`).
 - Centralized Copilot invocation in `copilot_access.py` with async subprocess execution, timeouts, and Windows-friendly command discovery (`copilot` / `copilot.cmd`).
 - Retained Windows adaptations: PowerShell automation, Kokoro/Edge TTS options, and stubbed macOS-only integrations (Calendar/Mail/Notes).
 
