@@ -309,8 +309,12 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
 
             log.info(f"Piper: Starting synthesis for text: {sanitized_text[:50]}...")
 
-            # Call synthesize - this should write WAV data to the stream
-            voice_obj.synthesize(sanitized_text, audio_stream)
+            # Call synthesize - this is a GENERATOR that yields audio chunks
+            # We need to iterate over it to ensure audio is written to the stream
+            for audio_chunk in voice_obj.synthesize(sanitized_text, audio_stream):
+                # The chunks are written to audio_stream by the synthesize method
+                # We just need to iterate to completion
+                pass
 
             # Get the bytes written to the stream using getvalue()
             # This is more reliable than seek(0) + read()
