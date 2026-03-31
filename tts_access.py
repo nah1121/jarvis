@@ -2,7 +2,9 @@ import asyncio
 import io
 import logging
 import os
+import re
 import tempfile
+import unicodedata
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
@@ -39,6 +41,49 @@ _pyttsx3_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="pyttsx
 _PIPER_HF_BASE = (
     "https://huggingface.co/rhasspy/piper-voices/resolve/v1.0.0"
 )
+
+
+def _sanitize_text_for_tts(text: str) -> str:
+    """Sanitize text for TTS engines to handle special characters and unicode.
+
+    Many TTS engines struggle with:
+    - Non-ASCII unicode characters (accents, special symbols)
+    - Control characters
+    - Emojis and other unicode symbols
+
+    This function normalizes the text to ASCII-safe equivalents.
+    """
+    if not text:
+        return ""
+
+    # Normalize unicode to decomposed form, then remove combining characters
+    # This converts é -> e, ñ -> n, etc.
+    text = unicodedata.normalize('NFKD', text)
+    text = ''.join(c for c in text if not unicodedata.combining(c))
+
+    # Replace common unicode symbols with ASCII equivalents
+    replacements = {
+        '—': '-',  # em dash
+        '–': '-',  # en dash
+        ''': "'",  # smart quote
+        ''': "'",  # smart quote
+        '"': '"',  # smart double quote
+        '"': '"',  # smart double quote
+        '…': '...',  # ellipsis
+        '°': ' degrees',  # degree symbol
+        '×': 'x',  # multiplication
+        '÷': '/',  # division
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+
+    # Remove any remaining non-ASCII characters
+    text = ''.join(c if ord(c) < 128 else ' ' for c in text)
+
+    # Clean up multiple spaces
+    text = re.sub(r'\s+', ' ', text)
+
+    return text.strip()
 
 
 def _download_piper_model(voice_name: str, voices_dir: Path) -> Optional[str]:
@@ -246,13 +291,19 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
     if voice_obj is None:
         return None
 
+    # Sanitize text for TTS: normalize unicode, remove problematic characters
+    sanitized_text = _sanitize_text_for_tts(text)
+    if not sanitized_text or not sanitized_text.strip():
+        log.warning("Text became empty after sanitization")
+        return None
+
     loop = asyncio.get_event_loop()
 
     def _render():
         try:
             # Synthesize to WAV bytes
             audio_stream = io.BytesIO()
-            voice_obj.synthesize(text, audio_stream)
+            voice_obj.synthesize(sanitized_text, audio_stream)
             audio_stream.seek(0)
             audio_bytes = audio_stream.read()
 
@@ -332,6 +383,12 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
     if engine is None:
         return None
 
+    # Sanitize text for TTS: normalize unicode, remove problematic characters
+    sanitized_text = _sanitize_text_for_tts(text)
+    if not sanitized_text or not sanitized_text.strip():
+        log.warning("Text became empty after sanitization")
+        return None
+
     loop = asyncio.get_event_loop()
 
     def _render():
@@ -340,7 +397,7 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp_path = tmp.name
 
-            engine.save_to_file(text, tmp_path)
+            engine.save_to_file(sanitized_text, tmp_path)
             engine.runAndWait()
 
             # Read WAV bytes
