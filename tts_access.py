@@ -328,7 +328,10 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
             # Debug: log shape of first chunk
             if audio_chunks:
                 first_chunk = audio_chunks[0]
-                log.info(f"Piper: First chunk type={type(first_chunk)}, shape={getattr(first_chunk, 'shape', 'no shape')}, dtype={getattr(first_chunk, 'dtype', 'no dtype')}")
+                chunk_type = type(first_chunk).__name__
+                chunk_shape = getattr(first_chunk, 'shape', 'no shape')
+                chunk_dtype = getattr(first_chunk, 'dtype', 'no dtype')
+                log.info(f"Piper: First chunk type={chunk_type}, shape={chunk_shape}, dtype={chunk_dtype}")
 
             audio_stream = io.BytesIO()
 
