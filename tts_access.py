@@ -325,10 +325,28 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
             import wave
             import numpy as np
 
+            # Debug: log shape of first chunk
+            if audio_chunks:
+                first_chunk = audio_chunks[0]
+                log.info(f"Piper: First chunk type={type(first_chunk)}, shape={getattr(first_chunk, 'shape', 'no shape')}, dtype={getattr(first_chunk, 'dtype', 'no dtype')}")
+
             audio_stream = io.BytesIO()
 
             # Concatenate all audio chunks
-            audio_data = np.concatenate(audio_chunks)
+            # Handle both 1D arrays and 0D scalars by ensuring all chunks are at least 1D
+            if len(audio_chunks) == 1:
+                # Single chunk - ensure it's at least 1D
+                audio_data = np.atleast_1d(audio_chunks[0])
+            else:
+                # Multiple chunks - ensure each is 1D before concatenating
+                audio_data = np.concatenate([np.atleast_1d(chunk) for chunk in audio_chunks])
+
+            log.info(f"Piper: Concatenated audio_data shape={audio_data.shape}, dtype={audio_data.dtype}, size={audio_data.size}")
+
+            # Validate we have audio samples
+            if audio_data.size == 0:
+                log.warning("Piper synthesis produced empty audio data array")
+                return None
 
             # Write WAV file to BytesIO
             with wave.open(audio_stream, 'wb') as wav_file:
@@ -434,13 +452,18 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
                 log.warning("pyttsx3 not installed. Run `pip install pyttsx3`.")
                 return None
 
+            log.info("pyttsx3: Creating fresh engine...")
+
             # Create a FRESH engine for this call (do NOT reuse cached engine)
             # This prevents runAndWait() from hanging on subsequent calls
             engine = pyttsx3.init()
+
+            log.info("pyttsx3: Setting rate...")
             engine.setProperty("rate", PYTTSX3_RATE)
 
             # Set voice if specified
             if PYTTSX3_VOICE:
+                log.info(f"pyttsx3: Setting voice to {PYTTSX3_VOICE}...")
                 voices = engine.getProperty("voices")
                 for v in voices:
                     if PYTTSX3_VOICE.lower() in v.name.lower() or PYTTSX3_VOICE in v.id:
@@ -448,25 +471,35 @@ async def _synthesize_pyttsx3(text: str, voice: Optional[str]) -> Optional[bytes
                         break
 
             # Save to temporary WAV file
+            log.info("pyttsx3: Creating temp file...")
             with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
                 tmp_path = tmp.name
 
+            log.info(f"pyttsx3: Saving to temp file {tmp_path}...")
             engine.save_to_file(sanitized_text, tmp_path)
+
+            log.info("pyttsx3: Running engine (this may take a moment)...")
             engine.runAndWait()
+
+            log.info("pyttsx3: Engine completed, reading audio bytes...")
 
             # Read WAV bytes
             with open(tmp_path, "rb") as f:
                 audio_bytes = f.read()
 
+            log.info(f"pyttsx3: Read {len(audio_bytes)} bytes from temp file")
+
             # Clean up temp file
             try:
                 os.unlink(tmp_path)
+                log.info("pyttsx3: Cleaned up temp file")
             except OSError as e:
                 log.debug("Failed to delete temporary WAV file %s: %s", tmp_path, e)
 
             # Clean up engine
             try:
                 engine.stop()
+                log.info("pyttsx3: Engine stopped")
             except Exception:
                 pass
 
