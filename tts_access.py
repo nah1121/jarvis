@@ -282,6 +282,11 @@ async def _ensure_piper_voice():
 
 async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
     """Generate speech using Piper TTS (local, neural-quality, CPU-friendly)."""
+    # Validate input text
+    if not text or not text.strip():
+        log.warning("Piper synthesis called with empty text")
+        return None
+
     try:
         voice_obj = await _ensure_piper_voice()
     except Exception as e:
