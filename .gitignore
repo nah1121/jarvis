@@ -49,3 +49,4 @@ context/
 # Test files
 test_copilot_capture.py
 test_tts_sanitization.py
+test_tts_full.py

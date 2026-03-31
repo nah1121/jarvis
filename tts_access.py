@@ -293,6 +293,9 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
 
     # Sanitize text for TTS: normalize unicode, remove problematic characters
     sanitized_text = _sanitize_text_for_tts(text)
+    log.info(f"Piper: Original text length: {len(text)}, Sanitized: {len(sanitized_text)}")
+    log.info(f"Piper: Sanitized text preview: {sanitized_text[:100]}")
+
     if not sanitized_text or not sanitized_text.strip():
         log.warning("Text became empty after sanitization")
         return None
@@ -312,6 +315,7 @@ async def _synthesize_piper(text: str, voice: Optional[str]) -> Optional[bytes]:
                 log.warning("Piper synthesis produced empty audio")
                 return None
 
+            log.info(f"Piper synthesis SUCCESS: {len(audio_bytes)} bytes")
             return audio_bytes
         except Exception as e:
             log.warning(f"Piper synthesis error: {e}", exc_info=True)
